@@ -56,14 +56,15 @@ let pageCache = null;
 async function getTeamPages() {
   if (pageCache) return pageCache;
 
-  // Search for VoxYZ HQ page
+  // Search for the top-level workspace page
+  const hqName = process.env.NOTION_HQ_PAGE || 'NERv';
   const searchResult = await notionRequest('POST', '/search', {
-    query: 'VoxYZ HQ',
+    query: hqName,
     filter: { property: 'object', value: 'page' }
   });
 
   if (!searchResult || !searchResult.results || searchResult.results.length === 0) {
-    console.error('[notion] Could not find VoxYZ HQ page. Make sure it exists and the integration has access.');
+    console.error(`[notion] Could not find "${hqName}" page. Make sure it exists and the integration has access.`);
     return null;
   }
 
