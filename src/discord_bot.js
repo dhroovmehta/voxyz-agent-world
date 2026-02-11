@@ -141,13 +141,12 @@ IMPORTANT: End your response with one of these tags so the system knows what to 
 [ACTION:RESPONSE] — if this is just a conversation reply
 [ACTION:APPROVAL_NEEDED] — if you need Zero's approval for something`;
 
-  // Call LLM as Frasier
+  // Call LLM as Frasier — always Tier 1, Frasier is just routing/responding
   const result = await models.callLLM({
     systemPrompt: promptData.systemPrompt,
     userMessage: frasierInstructions,
     agentId: frasierAgent.id,
-    isComplex: false,
-    taskDescription: content
+    forceTier: 'tier1'
   });
 
   if (result.error) {
