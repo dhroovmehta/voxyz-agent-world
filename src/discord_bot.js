@@ -23,6 +23,7 @@ const models = require('./lib/models');
 const memory = require('./lib/memory');
 const policy = require('./lib/policy');
 const notion = require('./lib/notion');
+const gdrive = require('./lib/google_drive');
 
 // ============================================================
 // DISCORD CLIENT SETUP
@@ -349,19 +350,32 @@ async function announceCompletedSteps() {
     const agent = await agents.getAgent(step.assigned_agent_id);
     const agentName = agent?.display_name || step.assigned_agent_id;
 
-    // Publish full deliverable to Notion
-    const notionPage = await notion.publishDeliverable({
-      title: step.missions.title,
-      content: step.result || '',
-      teamId: step.missions.team_id,
-      agentName,
-      missionId: step.mission_id,
-      stepId: step.id
-    });
+    // Publish full deliverable to Notion and Google Drive in parallel
+    const [notionPage, driveDoc] = await Promise.all([
+      notion.publishDeliverable({
+        title: step.missions.title,
+        content: step.result || '',
+        teamId: step.missions.team_id,
+        agentName,
+        missionId: step.mission_id,
+        stepId: step.id
+      }),
+      gdrive.publishDeliverable({
+        title: step.missions.title,
+        content: step.result || '',
+        teamId: step.missions.team_id,
+        agentName,
+        missionId: step.mission_id,
+        stepId: step.id
+      })
+    ]);
 
-    // Brief alert in Discord — link to Notion if available
-    const notionLink = notionPage?.url ? `\n[View in Notion](${notionPage.url})` : '';
-    const announcement = `**Deliverable Ready** — ${step.missions.title}\nAgent: ${agentName} | Approved by Team Lead${notionLink}`;
+    // Brief alert in Discord — links to Notion and/or Google Drive
+    const links = [];
+    if (notionPage?.url) links.push(`[Notion](${notionPage.url})`);
+    if (driveDoc?.url) links.push(`[Google Doc](${driveDoc.url})`);
+    const linkText = links.length > 0 ? `\n${links.join(' | ')}` : '';
+    const announcement = `**Deliverable Ready** — ${step.missions.title}\nAgent: ${agentName} | Approved by Team Lead${linkText}`;
 
     await sendSplit(channel, announcement);
 
