@@ -1,0 +1,606 @@
+// missions.js — Mission lifecycle: proposal → mission → steps → execution → completion
+// WHY this is the critical path: Every piece of work flows through this pipeline.
+// Zero sends a request → proposal created → heartbeat picks it up → mission created →
+// steps assigned to agents → worker executes → approval chain → result delivered.
+
+const supabase = require('./supabase');
+
+// Agent expertise map for keyword-based routing
+const EXPERTISE_MAP = {
+  research: ['research', 'analysis', 'market', 'competitive', 'trends', 'intelligence', 'data', 'report'],
+  strategy: ['strategy', 'business plan', 'roadmap', 'pricing', 'financial', 'revenue', 'growth plan'],
+  content: ['content', 'copywriting', 'blog', 'social media', 'tweet', 'post', 'brand', 'storytelling', 'article'],
+  engineering: ['code', 'architecture', 'deploy', 'build', 'api', 'database', 'backend', 'frontend', 'debug'],
+  qa: ['test', 'quality', 'review', 'audit', 'security', 'bug', 'validate', 'verify'],
+  marketing: ['seo', 'distribution', 'funnel', 'ads', 'campaign', 'conversion', 'traffic', 'growth'],
+  knowledge: ['document', 'summarize', 'knowledge', 'wiki', 'organize', 'catalog', 'index']
+};
+
+// ============================================================
+// PROPOSALS (input queue)
+// ============================================================
+
+/**
+ * Create a new mission proposal. Called when Zero sends a request via Discord,
+ * or when an agent suggests work (e.g., follow-up from a completed mission).
+ */
+async function createProposal({
+  proposingAgentId = 'zero',
+  title,
+  description = null,
+  priority = 'normal',
+  targetTeamId = null,
+  rawMessage = null,
+  discordMessageId = null
+}) {
+  const { data, error } = await supabase
+    .from('mission_proposals')
+    .insert({
+      proposing_agent_id: proposingAgentId,
+      title,
+      description,
+      priority,
+      assigned_team_id: targetTeamId,
+      raw_message: rawMessage,
+      discord_message_id: discordMessageId
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[missions] Failed to create proposal:', error.message);
+    return null;
+  }
+
+  console.log(`[missions] Proposal #${data.id} created: "${title}" (priority: ${priority})`);
+  return data;
+}
+
+/**
+ * Get unprocessed proposals (for heartbeat to pick up).
+ */
+async function getPendingProposals() {
+  const { data, error } = await supabase
+    .from('mission_proposals')
+    .select('*')
+    .eq('status', 'pending')
+    .eq('processed', false)
+    .order('priority', { ascending: true })  // urgent first
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('[missions] Failed to get pending proposals:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Accept a proposal and create a mission from it.
+ */
+async function acceptProposal(proposalId, teamId) {
+  // Mark proposal as accepted
+  const { error: updateErr } = await supabase
+    .from('mission_proposals')
+    .update({
+      status: 'accepted',
+      processed: true
+    })
+    .eq('id', proposalId);
+
+  if (updateErr) {
+    console.error(`[missions] Failed to accept proposal #${proposalId}:`, updateErr.message);
+    return null;
+  }
+
+  // Fetch proposal for mission creation
+  const { data: proposal } = await supabase
+    .from('mission_proposals')
+    .select('*')
+    .eq('id', proposalId)
+    .single();
+
+  if (!proposal) return null;
+
+  // Create mission
+  const mission = await createMission({
+    proposalId,
+    teamId,
+    title: proposal.title,
+    description: proposal.description
+  });
+
+  return mission;
+}
+
+/**
+ * Reject a proposal.
+ */
+async function rejectProposal(proposalId, reason = null) {
+  const { error } = await supabase
+    .from('mission_proposals')
+    .update({
+      status: 'rejected',
+      processed: true
+    })
+    .eq('id', proposalId);
+
+  if (error) {
+    console.error(`[missions] Failed to reject proposal #${proposalId}:`, error.message);
+    return false;
+  }
+  return true;
+}
+
+// ============================================================
+// MISSIONS (active work)
+// ============================================================
+
+/**
+ * Create a mission from an accepted proposal.
+ */
+async function createMission({
+  proposalId = null,
+  teamId,
+  title,
+  description = null
+}) {
+  const { data, error } = await supabase
+    .from('missions')
+    .insert({
+      proposal_id: proposalId,
+      team_id: teamId,
+      title,
+      description
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[missions] Failed to create mission:', error.message);
+    return null;
+  }
+
+  console.log(`[missions] Mission #${data.id} created: "${title}" for team ${teamId}`);
+  return data;
+}
+
+/**
+ * Get all active missions for a team.
+ */
+async function getActiveMissions(teamId = null) {
+  let query = supabase
+    .from('missions')
+    .select('*')
+    .eq('status', 'in_progress')
+    .order('created_at', { ascending: true });
+
+  if (teamId) {
+    query = query.eq('team_id', teamId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[missions] Failed to get active missions:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Complete a mission.
+ */
+async function completeMission(missionId) {
+  const { data, error } = await supabase
+    .from('missions')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', missionId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to complete mission #${missionId}:`, error.message);
+    return null;
+  }
+
+  console.log(`[missions] Mission #${missionId} completed`);
+  return data;
+}
+
+/**
+ * Fail a mission.
+ */
+async function failMission(missionId, reason = null) {
+  const { data, error } = await supabase
+    .from('missions')
+    .update({
+      status: 'failed',
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', missionId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to mark mission #${missionId} as failed:`, error.message);
+    return null;
+  }
+  return data;
+}
+
+// ============================================================
+// MISSION STEPS (individual tasks)
+// ============================================================
+
+/**
+ * Create a mission step (task for an agent).
+ */
+async function createStep({
+  missionId,
+  description,
+  assignedAgentId = null,
+  modelTier = 'tier1',
+  stepOrder = 0,
+  parentStepId = null
+}) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .insert({
+      mission_id: missionId,
+      description,
+      assigned_agent_id: assignedAgentId,
+      model_tier: modelTier,
+      step_order: stepOrder,
+      parent_step_id: parentStepId
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[missions] Failed to create step:', error.message);
+    return null;
+  }
+
+  console.log(`[missions] Step #${data.id} created for mission #${missionId}: "${description.substring(0, 60)}..."`);
+  return data;
+}
+
+/**
+ * Get pending steps ready for the worker to pick up.
+ * Only returns steps assigned to active agents.
+ */
+async function getPendingSteps(limit = 5) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .select('*, missions!inner(status, team_id)')
+    .eq('status', 'pending')
+    .eq('processed', false)
+    .eq('missions.status', 'in_progress')
+    .order('step_order', { ascending: true })
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    console.error('[missions] Failed to get pending steps:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Claim a step (set to in_progress). Prevents double-pickup.
+ */
+async function claimStep(stepId) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .update({
+      status: 'in_progress',
+      processed: true,
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', stepId)
+    .eq('status', 'pending')  // Only claim if still pending (idempotent)
+    .select()
+    .single();
+
+  if (error) {
+    // Likely already claimed by another worker
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Complete a step with its result.
+ */
+async function completeStep(stepId, result, resultFormat = 'text') {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .update({
+      status: 'in_review',  // Goes to approval chain, not straight to completed
+      result,
+      result_format: resultFormat,
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', stepId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to complete step #${stepId}:`, error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Fail a step.
+ */
+async function failStep(stepId, errorMessage) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .update({
+      status: 'failed',
+      result: `ERROR: ${errorMessage}`,
+      completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', stepId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to mark step #${stepId} as failed:`, error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Send a step back for revision (from QA or Team Lead rejection).
+ */
+async function sendBackForRevision(stepId) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .update({
+      status: 'pending',
+      processed: false,
+      result: null,
+      completed_at: null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', stepId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to send step #${stepId} back:`, error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Mark a step as fully approved and completed.
+ */
+async function approveStep(stepId) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .update({
+      status: 'completed',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', stepId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to approve step #${stepId}:`, error.message);
+    return null;
+  }
+  return data;
+}
+
+// ============================================================
+// APPROVAL CHAIN (QA → Team Lead)
+// ============================================================
+
+/**
+ * Create an approval request for a completed step.
+ */
+async function createApproval({
+  missionStepId,
+  reviewerAgentId,
+  reviewType  // 'qa' | 'team_lead'
+}) {
+  const { data, error } = await supabase
+    .from('approval_chain')
+    .insert({
+      mission_step_id: missionStepId,
+      reviewer_agent_id: reviewerAgentId,
+      review_type: reviewType
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[missions] Failed to create approval:', error.message);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Submit a review (approve or reject with feedback).
+ */
+async function submitReview(approvalId, { status, feedback = null }) {
+  const { data, error } = await supabase
+    .from('approval_chain')
+    .update({
+      status,
+      feedback,
+      reviewed_at: new Date().toISOString()
+    })
+    .eq('id', approvalId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`[missions] Failed to submit review #${approvalId}:`, error.message);
+    return null;
+  }
+
+  // If rejected, send step back for revision
+  if (status === 'rejected') {
+    await sendBackForRevision(data.mission_step_id);
+    console.log(`[missions] Step #${data.mission_step_id} sent back for revision (${data.review_type} rejected)`);
+  }
+
+  return data;
+}
+
+/**
+ * Get pending approvals for a reviewer agent.
+ */
+async function getPendingApprovals(reviewerAgentId) {
+  const { data, error } = await supabase
+    .from('approval_chain')
+    .select('*, mission_steps!inner(*)')
+    .eq('reviewer_agent_id', reviewerAgentId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('[missions] Failed to get pending approvals:', error.message);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Get steps in review that need approvals created.
+ */
+async function getStepsNeedingReview() {
+  // Find steps that are in_review but don't have a pending approval yet
+  const { data: stepsInReview, error: stepErr } = await supabase
+    .from('mission_steps')
+    .select('*')
+    .eq('status', 'in_review')
+    .order('completed_at', { ascending: true });
+
+  if (stepErr || !stepsInReview) return [];
+
+  const results = [];
+  for (const step of stepsInReview) {
+    // Check if there's already a pending approval for this step
+    const { data: approvals } = await supabase
+      .from('approval_chain')
+      .select('*')
+      .eq('mission_step_id', step.id)
+      .eq('status', 'pending');
+
+    if (!approvals || approvals.length === 0) {
+      results.push(step);
+    }
+  }
+
+  return results;
+}
+
+// ============================================================
+// SMART ROUTING (keyword-based agent assignment)
+// ============================================================
+
+/**
+ * Determine the best agent role for a task based on keywords.
+ * Returns a role category (research, strategy, content, etc.).
+ * The caller then finds an agent with that role on the target team.
+ */
+function routeByKeywords(taskDescription) {
+  const lower = taskDescription.toLowerCase();
+  const scores = {};
+
+  for (const [role, keywords] of Object.entries(EXPERTISE_MAP)) {
+    scores[role] = 0;
+    for (const keyword of keywords) {
+      if (lower.includes(keyword)) {
+        scores[role]++;
+      }
+    }
+  }
+
+  // Find highest scoring role
+  let bestRole = null;
+  let bestScore = 0;
+  for (const [role, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      bestRole = role;
+      bestScore = score;
+    }
+  }
+
+  return bestRole || 'research'; // Default to research if no match
+}
+
+/**
+ * Check if all steps for a mission are completed.
+ * If so, mark the mission as completed.
+ */
+async function checkMissionCompletion(missionId) {
+  const { data: steps, error } = await supabase
+    .from('mission_steps')
+    .select('status')
+    .eq('mission_id', missionId);
+
+  if (error || !steps) return false;
+  if (steps.length === 0) return false;
+
+  const allDone = steps.every(s => s.status === 'completed' || s.status === 'failed');
+  if (allDone) {
+    const anyFailed = steps.some(s => s.status === 'failed');
+    if (anyFailed) {
+      await failMission(missionId, 'One or more steps failed');
+    } else {
+      await completeMission(missionId);
+    }
+    return true;
+  }
+  return false;
+}
+
+module.exports = {
+  // Proposals
+  createProposal,
+  getPendingProposals,
+  acceptProposal,
+  rejectProposal,
+  // Missions
+  createMission,
+  getActiveMissions,
+  completeMission,
+  failMission,
+  // Steps
+  createStep,
+  getPendingSteps,
+  claimStep,
+  completeStep,
+  failStep,
+  sendBackForRevision,
+  approveStep,
+  // Approval chain
+  createApproval,
+  submitReview,
+  getPendingApprovals,
+  getStepsNeedingReview,
+  // Routing
+  routeByKeywords,
+  checkMissionCompletion,
+  EXPERTISE_MAP
+};

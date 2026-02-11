@@ -1,0 +1,21 @@
+{
+  "name": "voxyz-agent-world",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.95.3",
+    "discord.js": "^14.25.1",
+    "dotenv": "^17.2.4",
+    "uuid": "^13.0.0"
+  }
+}
