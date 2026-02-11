@@ -347,16 +347,13 @@ async function announceCompletedSteps() {
     // Build announcement
     const agent = await agents.getAgent(step.assigned_agent_id);
     const agentName = agent?.display_name || step.assigned_agent_id;
-    const resultPreview = (step.result || '').substring(0, 1500);
 
-    const announcement = [
-      `**Task Completed** — ${step.missions.title}`,
-      `Agent: ${agentName}`,
-      ``,
-      resultPreview
-    ].join('\n');
+    // Brief alert only — full deliverable goes to Notion/Google Drive
+    const announcement = `**Deliverable Ready** — ${step.missions.title}\nAgent: ${agentName} | Approved by Team Lead\nFull report published to Notion.`;
 
     await sendSplit(channel, announcement);
+
+    // TODO: publish full result to Notion/Google Drive here
 
     // Mark as announced
     await supabase
