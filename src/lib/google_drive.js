@@ -49,12 +49,18 @@ function getDriveClient() {
       }
     }
 
+    // Use domain-wide delegation to impersonate the Workspace user
+    // This makes files count against the Workspace user's storage, not the service account
+    const impersonateEmail = process.env.GOOGLE_IMPERSONATE_EMAIL;
+
     const auth = new google.auth.GoogleAuth({
       credentials: key,
-      scopes: ['https://www.googleapis.com/auth/drive']
+      scopes: ['https://www.googleapis.com/auth/drive'],
+      clientOptions: impersonateEmail ? { subject: impersonateEmail } : {}
     });
 
     driveClient = google.drive({ version: 'v3', auth });
+    console.log(`[gdrive] Authenticated${impersonateEmail ? ` as ${impersonateEmail}` : ''}`);
     return driveClient;
   } catch (err) {
     console.error('[gdrive] Failed to initialize Drive client:', err.message);
@@ -189,12 +195,11 @@ async function publishDeliverable({ title, content, teamId, agentName, missionId
   const fullContent = `Agent: ${agentName} | Mission #${missionId} | Step #${stepId} | ${dateStr}\n${'─'.repeat(60)}\n\n${content}`;
 
   try {
-    // Upload as a text file (service accounts have no Drive storage,
-    // so we transfer ownership to the founder's account after creation)
+    // Create a Google Doc (with Workspace impersonation, storage counts against the user)
     const file = await drive.files.create({
       requestBody: {
-        name: `${title}.txt`,
-        mimeType: 'text/plain',
+        name: title,
+        mimeType: 'application/vnd.google-apps.document',
         parents: [parentFolderId]
       },
       media: {
@@ -207,21 +212,7 @@ async function publishDeliverable({ title, content, teamId, agentName, missionId
     const docId = file.data.id;
     const docUrl = file.data.webViewLink;
 
-    // Transfer ownership to the founder so storage counts against their 15GB
-    const ownerEmail = process.env.GMAIL_USER;
-    if (ownerEmail) {
-      await drive.permissions.create({
-        fileId: docId,
-        transferOwnership: true,
-        requestBody: {
-          role: 'owner',
-          type: 'user',
-          emailAddress: ownerEmail
-        }
-      });
-    }
-
-    // Also make viewable by anyone with link
+    // Make the doc viewable by anyone with the link
     await drive.permissions.create({
       fileId: docId,
       requestBody: {
