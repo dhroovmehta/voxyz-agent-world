@@ -27,6 +27,10 @@ function getDriveClient() {
 
   try {
     const key = JSON.parse(keyJson);
+    // dotenv reads \n as literal text — convert to real newlines for the crypto library
+    if (key.private_key) {
+      key.private_key = key.private_key.replace(/\\n/g, '\n');
+    }
     const auth = new google.auth.GoogleAuth({
       credentials: key,
       scopes: ['https://www.googleapis.com/auth/drive']
