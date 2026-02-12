@@ -65,19 +65,73 @@ async function fetchPage(url, maxChars = 8000) {
 }
 
 // ============================================================
-// WEB SEARCH (DuckDuckGo HTML — no API key needed)
+// WEB SEARCH (Brave API primary, DuckDuckGo fallback)
 // ============================================================
 
 /**
- * Search the web using DuckDuckGo's HTML endpoint.
- * Returns a list of results with titles, URLs, and snippets.
- * Free, no API key, no rate limit issues for our volume.
+ * Search the web. Tries Brave Search API first (structured JSON, reliable),
+ * falls back to DuckDuckGo HTML scraping if Brave key isn't set or fails.
  *
  * @param {string} query - Search query
  * @param {number} [maxResults=5] - Max results to return
  * @returns {{ results: Array<{title, url, snippet}>, error: string|null }}
  */
 async function searchWeb(query, maxResults = 5) {
+  const braveKey = process.env.BRAVE_API_KEY;
+
+  // Try Brave first — structured JSON, won't break on HTML changes
+  if (braveKey) {
+    const braveResult = await searchBrave(query, braveKey, maxResults);
+    if (braveResult.results.length > 0) return braveResult;
+    console.log(`[web] Brave returned 0 results, falling back to DuckDuckGo`);
+  }
+
+  // Fallback: DuckDuckGo HTML scraping
+  return searchDuckDuckGo(query, maxResults);
+}
+
+/**
+ * Search via Brave Search API. Returns structured JSON — no HTML parsing needed.
+ * Free tier: 2,000 queries/month, 1 req/sec.
+ */
+async function searchBrave(query, apiKey, maxResults = 5) {
+  try {
+    const encoded = encodeURIComponent(query);
+    const response = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encoded}&count=${maxResults}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip',
+        'X-Subscription-Token': apiKey
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`[web] Brave search failed: HTTP ${response.status} — ${body.substring(0, 200)}`);
+      return { results: [], error: `Brave HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+    const results = (data.web?.results || []).slice(0, maxResults).map(r => ({
+      title: r.title || '',
+      url: r.url || '',
+      snippet: r.description || ''
+    }));
+
+    console.log(`[web] Brave search "${query}": ${results.length} results`);
+    return { results, error: null };
+  } catch (err) {
+    console.error(`[web] Brave search failed for "${query}": ${err.message}`);
+    return { results: [], error: err.message };
+  }
+}
+
+/**
+ * Search via DuckDuckGo HTML endpoint. Free, no API key needed.
+ * Fallback when Brave isn't configured or fails.
+ */
+async function searchDuckDuckGo(query, maxResults = 5) {
   try {
     const encoded = encodeURIComponent(query);
     const response = await fetch(`https://html.duckduckgo.com/html/?q=${encoded}`, {
@@ -95,10 +149,10 @@ async function searchWeb(query, maxResults = 5) {
     const html = await response.text();
     const results = parseSearchResults(html, maxResults);
 
-    console.log(`[web] Search "${query}": ${results.length} results`);
+    console.log(`[web] DuckDuckGo search "${query}": ${results.length} results`);
     return { results, error: null };
   } catch (err) {
-    console.error(`[web] Search failed for "${query}": ${err.message}`);
+    console.error(`[web] DuckDuckGo search failed for "${query}": ${err.message}`);
     return { results: [], error: err.message };
   }
 }
