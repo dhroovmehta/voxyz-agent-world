@@ -625,6 +625,18 @@ async function announceAlerts() {
     );
     await events.markProcessed([evt.id]);
   }
+
+  // Post agent upskill notifications
+  const upskillEvents = await events.getUnprocessedEvents('agent_upskilled');
+  const updatesChannel = channels['updates'] || channels['general'];
+  for (const evt of upskillEvents) {
+    const ch = updatesChannel || alertChannel;
+    if (!ch) continue;
+    await sendSplit(ch,
+      `📈 **Agent Upskilled** — ${evt.description}\nSkill gap: ${evt.data?.skillGap || 'unknown'}\nThe agent's persona has been permanently upgraded. Retrying the task.`
+    );
+    await events.markProcessed([evt.id]);
+  }
 }
 
 // ============================================================

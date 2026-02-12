@@ -16,6 +16,7 @@ const events = require('./lib/events');
 const skills = require('./lib/skills');
 const web = require('./lib/web');
 const social = require('./lib/social');
+const agents = require('./lib/agents');
 const supabase = require('./lib/supabase');
 
 const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
@@ -277,6 +278,12 @@ async function processNextReview() {
         result.content
       );
 
+      // PERSONA UPSKILLING: If an agent fails 5+ times on the same step, their persona
+      // is permanently upgraded with new expertise. This is the most effective growth
+      // mechanism because the persona is ALWAYS present in the system prompt, unlike
+      // lessons which compete with 25+ other memories for the top 5 slots.
+      await maybeUpskillAgent(step.id, step.assigned_agent_id, step.description);
+
       console.log(`[worker] Review #${approval.id}: REJECTED. Step sent back for revision.`);
 
     } else {
@@ -414,6 +421,153 @@ async function generateLessonFromRejection(agentId, taskDescription, rejectionFe
 
   } catch (err) {
     console.error(`[worker] Rejection lesson failed for ${agentId}: ${err.message}`);
+  }
+}
+
+// ============================================================
+// PERSONA UPSKILLING (how agents permanently grow through failure)
+// ============================================================
+
+/**
+ * After each rejection, check if this step has been rejected 5+ times.
+ * If so, analyze all rejection feedback, identify the skill gap, and
+ * append new expertise directly to the agent's SEP persona prompt.
+ *
+ * WHY persona modification instead of lessons:
+ * - The persona is ALWAYS in the system prompt (100% retrieval rate)
+ * - Lessons compete for the top 5 slots out of potentially hundreds
+ * - The persona defines WHO the agent IS — upgrading it changes their identity
+ * - An agent who "is" an expert behaves differently than one who "remembers" a tip
+ *
+ * Cost: One Tier 1 LLM call (~$0.001) per upskill event. Rare — only triggers
+ * after 5 rejections on the same step, which should be uncommon.
+ */
+async function maybeUpskillAgent(stepId, agentId, taskDescription) {
+  try {
+    // Count how many times this specific step has been rejected
+    const { data: rejections, error } = await supabase
+      .from('approval_chain')
+      .select('feedback')
+      .eq('mission_step_id', stepId)
+      .eq('status', 'rejected')
+      .order('reviewed_at', { ascending: true });
+
+    if (error || !rejections || rejections.length < 5) return;
+
+    // Only trigger on exactly the 5th rejection (not 6th, 7th, etc.)
+    // WHY: One upskill per step is enough. The upgraded persona should fix it.
+    if (rejections.length !== 5) return;
+
+    console.log(`[worker] Step #${stepId} rejected 5 times. Upskilling ${agentId}...`);
+
+    // Fetch the agent's current persona
+    const personaData = await memory.getAgentPersona(agentId);
+    if (!personaData || !personaData.persona) {
+      console.error(`[worker] Cannot upskill ${agentId}: no persona found`);
+      return;
+    }
+
+    // Combine all 5 rejection feedbacks for analysis
+    const feedbackSummary = rejections
+      .map((r, i) => `Rejection ${i + 1}: ${(r.feedback || 'No feedback').substring(0, 300)}`)
+      .join('\n\n');
+
+    // Ask LLM to analyze the pattern and identify the skill gap
+    const analysisPrompt = `You are analyzing repeated quality failures for an AI agent.
+
+The agent "${personaData.agent.display_name}" (role: ${personaData.agent.role}) has failed the same task 5 times.
+
+TASK: "${taskDescription}"
+
+REJECTION FEEDBACK (all 5 attempts):
+${feedbackSummary}
+
+Based on these rejections, identify:
+1. The specific skill gap or knowledge area the agent is missing
+2. A concise expertise addition (2-4 sentences) that would fix this gap
+
+Format your response EXACTLY like this:
+SKILL_GAP: [one-line description of what's missing]
+EXPERTISE_ADDITION: [2-4 sentences describing the new expertise to add to the agent's persona. Write in second person ("You have expertise in..."). Be specific and actionable.]`;
+
+    const analysis = await models.callLLM({
+      systemPrompt: 'You are a talent development specialist. Analyze failure patterns and prescribe precise skill upgrades.',
+      userMessage: analysisPrompt,
+      agentId: 'system',
+      forceTier: 'tier1'
+    });
+
+    if (analysis.error || !analysis.content) {
+      console.error(`[worker] Upskill analysis failed for ${agentId}: ${analysis.error}`);
+      return;
+    }
+
+    // Parse the LLM response
+    const skillGapMatch = analysis.content.match(/SKILL_GAP:\s*(.+)/i);
+    const expertiseMatch = analysis.content.match(/EXPERTISE_ADDITION:\s*([\s\S]+?)(?=$|\n\n)/i);
+
+    const skillGap = skillGapMatch ? skillGapMatch[1].trim() : 'unspecified skill gap';
+    const expertiseAddition = expertiseMatch
+      ? expertiseMatch[1].trim()
+      : analysis.content.substring(0, 300); // Fallback: use raw response
+
+    // Append the new expertise to the existing persona
+    const currentSep = personaData.persona.full_sep_prompt;
+    const upskillBlock = `\n\n═══════════════════════════════════════════════
+LEARNED EXPERTISE (acquired through experience)
+═══════════════════════════════════════════════
+[Upskilled: ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}]
+${expertiseAddition}`;
+
+    const upgradedSep = currentSep + upskillBlock;
+
+    // Save as new persona row (preserves history — old persona still exists)
+    const newPersona = await agents.savePersona({
+      agentId,
+      agentMd: personaData.persona.agent_md,
+      soulMd: personaData.persona.soul_md,
+      skillsMd: (personaData.persona.skills_md || '') + `\n- ${skillGap}`,
+      identityMd: personaData.persona.identity_md,
+      fullSepPrompt: upgradedSep
+    });
+
+    if (!newPersona) {
+      console.error(`[worker] Failed to save upgraded persona for ${agentId}`);
+      return;
+    }
+
+    // Log event so Discord picks it up and notifies Zero
+    await events.logEvent({
+      eventType: 'agent_upskilled',
+      agentId,
+      severity: 'info',
+      description: `${personaData.agent.display_name} upskilled: ${skillGap}. Persona upgraded, retrying task.`,
+      data: {
+        stepId,
+        skillGap,
+        expertiseAddition,
+        rejectionCount: 5,
+        oldPersonaId: personaData.persona.id,
+        newPersonaId: newPersona.id
+      }
+    });
+
+    // Save to agent's memory so they "remember" the growth
+    await memory.saveMemory({
+      agentId,
+      memoryType: 'lesson',
+      content: `I was upskilled after struggling with: "${taskDescription.substring(0, 100)}". My persona was upgraded with new expertise in: ${skillGap}. I should now approach similar tasks with this stronger foundation.`,
+      summary: `Upskilled in: ${skillGap}`,
+      topicTags: ['upskill', 'growth', 'persona-upgrade'],
+      importance: 9, // High importance — this is a defining moment
+      sourceType: 'review'
+    });
+
+    console.log(`[worker] ✓ ${personaData.agent.display_name} upskilled in "${skillGap}". New persona #${newPersona.id} active.`);
+
+  } catch (err) {
+    // Upskilling is non-critical — never fail the review process over it
+    console.error(`[worker] Upskill failed for ${agentId}: ${err.message}`);
   }
 }
 
