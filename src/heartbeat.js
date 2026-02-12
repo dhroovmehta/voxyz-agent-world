@@ -17,6 +17,7 @@ const memory = require('./lib/memory');
 const models = require('./lib/models');
 const events = require('./lib/events');
 const policy = require('./lib/policy');
+const skills = require('./lib/skills');
 
 const POLL_INTERVAL_MS = 30 * 1000; // 30 seconds
 let running = true;
@@ -237,6 +238,9 @@ async function processApprovedHires() {
         fullSepPrompt: persona.fullSepPrompt
       });
     }
+
+    // Step 2b: Initialize skills based on role
+    await skills.initializeSkills(newAgent.id, hire.role);
 
     // Step 3: Mark hiring proposal as completed
     await agents.completeHiringProposal(hire.id, newAgent.id);

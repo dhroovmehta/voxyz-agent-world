@@ -428,24 +428,38 @@ async function getAgentPersona(agentId) {
  * Called before every single LLM call.
  */
 async function buildAgentPrompt(agentId, topicTags = []) {
-  const [personaData, memories] = await Promise.all([
+  const skills = require('./skills');
+
+  const [personaData, memories, agentSkills] = await Promise.all([
     getAgentPersona(agentId),
-    retrieveMemories(agentId, topicTags)
+    retrieveMemories(agentId, topicTags),
+    skills.getAgentSkills(agentId)
   ]);
 
   if (!personaData) {
     return { systemPrompt: null, memories: null, error: `Agent ${agentId} not found` };
   }
 
-  // Combine identity + memory into one system prompt
-  const systemPrompt = [
+  // Combine identity + memory + skills into one system prompt
+  const skillsSection = skills.formatSkillsForPrompt(agentSkills);
+
+  const promptParts = [
     personaData.systemPrompt,
     '\n---\n',
     '# YOUR MEMORY (What you remember from past experience)',
-    memories.formatted,
-    '\n---\n',
-    'IMPORTANT: You have persistent memory. Reference your past experiences, lessons, and recent activity when relevant. You remember everything above — it is YOUR lived experience, not external data.'
-  ].join('\n');
+    memories.formatted
+  ];
+
+  // Only add skills section if agent has developed skills (backwards-compatible)
+  if (skillsSection) {
+    promptParts.push('\n---\n');
+    promptParts.push(skillsSection);
+  }
+
+  promptParts.push('\n---\n');
+  promptParts.push('IMPORTANT: You have persistent memory. Reference your past experiences, lessons, and recent activity when relevant. You remember everything above — it is YOUR lived experience, not external data.');
+
+  const systemPrompt = promptParts.join('\n');
 
   return {
     systemPrompt,

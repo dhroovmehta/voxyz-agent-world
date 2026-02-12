@@ -13,6 +13,7 @@ const models = require('./lib/models');
 const missions = require('./lib/missions');
 const conversations = require('./lib/conversations');
 const events = require('./lib/events');
+const skills = require('./lib/skills');
 const supabase = require('./lib/supabase');
 
 const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
@@ -122,6 +123,9 @@ async function processNextStep() {
       sourceType: 'mission',
       sourceId: String(step.mission_id)
     });
+
+    // Track skill usage — agent grows through doing
+    await skills.trackSkillUsage(step.assigned_agent_id, step.description);
 
     await events.logEvent({
       eventType: 'task_completed',
@@ -260,6 +264,9 @@ async function processNextReview() {
         importance: 5,
         sourceType: 'review'
       });
+
+      // Track reviewer's skill growth — reviewing builds QA expertise
+      await skills.trackSkillUsage(approval.reviewer_agent_id, 'quality review audit validate');
     }
 
   } catch (err) {
