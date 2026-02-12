@@ -251,6 +251,108 @@ async function publishDeliverable({ title, content, teamId, agentName, missionId
   }
 }
 
+// ============================================================
+// DAILY BACKUP (Decision 23 — automated DB backup to Drive)
+// ============================================================
+
+/**
+ * Export key database tables as JSON files to a "Backups" folder in Google Drive.
+ * Runs daily at 3am ET via heartbeat. Zero cost — just Drive storage.
+ *
+ * Tables backed up:
+ *   - agents, agent_personas, teams, ops_policy (full — small tables)
+ *   - agent_memories, lessons_learned (last 7 days)
+ *   - missions, mission_steps (last 7 days)
+ *   - model_usage (last 7 days — for cost audit trail)
+ */
+async function backupDatabase() {
+  const drive = getDriveClient();
+  if (!drive) {
+    console.error('[gdrive] Backup skipped — no Drive client');
+    return { success: false, error: 'No Drive client' };
+  }
+
+  const folders = await getTeamFolders();
+  if (!folders) {
+    console.error('[gdrive] Backup skipped — no folder structure');
+    return { success: false, error: 'No folder structure' };
+  }
+
+  // Find or create a "Backups" folder under the root
+  const backupFolderId = await findOrCreateFolder(drive, 'Backups', folders.rootFolderId);
+  if (!backupFolderId) {
+    return { success: false, error: 'Could not create Backups folder' };
+  }
+
+  const dateStr = new Date().toISOString().split('T')[0]; // e.g. 2026-02-11
+  const dayFolderId = await findOrCreateFolder(drive, `backup-${dateStr}`, backupFolderId);
+  if (!dayFolderId) {
+    return { success: false, error: 'Could not create day folder' };
+  }
+
+  // 7-day lookback for large tables
+  const since = new Date();
+  since.setDate(since.getDate() - 7);
+  const sinceIso = since.toISOString();
+
+  // Define what to back up
+  const backupTasks = [
+    { name: 'agents', query: supabase.from('agents').select('*') },
+    { name: 'agent_personas', query: supabase.from('agent_personas').select('*') },
+    { name: 'teams', query: supabase.from('teams').select('*') },
+    { name: 'ops_policy', query: supabase.from('ops_policy').select('*') },
+    { name: 'agent_memories_7d', query: supabase.from('agent_memories').select('*').gte('created_at', sinceIso).order('created_at', { ascending: false }).limit(1000) },
+    { name: 'lessons_learned', query: supabase.from('lessons_learned').select('*') },
+    { name: 'missions_7d', query: supabase.from('missions').select('*').gte('created_at', sinceIso) },
+    { name: 'mission_steps_7d', query: supabase.from('mission_steps').select('*').gte('created_at', sinceIso) },
+    { name: 'model_usage_7d', query: supabase.from('model_usage').select('*').gte('created_at', sinceIso).limit(2000) }
+  ];
+
+  let uploadedCount = 0;
+  const errors = [];
+
+  for (const task of backupTasks) {
+    try {
+      const { data, error } = await task.query;
+      if (error) {
+        errors.push(`${task.name}: ${error.message}`);
+        continue;
+      }
+
+      const jsonContent = JSON.stringify(data || [], null, 2);
+
+      await drive.files.create({
+        requestBody: {
+          name: `${task.name}.json`,
+          mimeType: 'application/json',
+          parents: [dayFolderId]
+        },
+        media: {
+          mimeType: 'application/json',
+          body: jsonContent
+        },
+        fields: 'id'
+      });
+
+      uploadedCount++;
+      console.log(`[gdrive] Backed up ${task.name}: ${(data || []).length} rows`);
+    } catch (err) {
+      errors.push(`${task.name}: ${err.message}`);
+    }
+  }
+
+  const result = {
+    success: errors.length === 0,
+    date: dateStr,
+    tablesBackedUp: uploadedCount,
+    totalTables: backupTasks.length,
+    errors
+  };
+
+  console.log(`[gdrive] Backup complete: ${uploadedCount}/${backupTasks.length} tables to backup-${dateStr}`);
+  return result;
+}
+
 /**
  * Clear the folder cache (call when folder structure changes).
  */
@@ -261,5 +363,6 @@ function clearCache() {
 module.exports = {
   publishDeliverable,
   getTeamFolders,
+  backupDatabase,
   clearCache
 };

@@ -14,6 +14,8 @@ const missions = require('./lib/missions');
 const conversations = require('./lib/conversations');
 const events = require('./lib/events');
 const skills = require('./lib/skills');
+const web = require('./lib/web');
+const social = require('./lib/social');
 const supabase = require('./lib/supabase');
 
 const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
@@ -109,14 +111,42 @@ async function processNextStep() {
       return;
     }
 
+    // WEB ACCESS: Check if the agent requested live data via [WEB_SEARCH:] or [WEB_FETCH:] tags
+    // WHY: Agents can't browse the web directly. They embed tags in their output,
+    // we resolve them, then re-call the LLM with the live data injected.
+    let finalContent = result.content;
+    const webResolution = await web.resolveWebTags(result.content);
+
+    if (webResolution.hasWebTags) {
+      console.log(`[worker] Step #${step.id}: Agent requested ${webResolution.results.length} web resource(s). Fetching...`);
+      const webContext = web.formatWebResults(webResolution.results);
+
+      const followUp = await models.callLLM({
+        systemPrompt: promptData.systemPrompt,
+        userMessage: `${step.description}\n\n${webContext}\n\nUsing the live web data above, complete the original task. Incorporate the real data into your response. Do NOT include [WEB_SEARCH] or [WEB_FETCH] tags in this response.`,
+        agentId: step.assigned_agent_id,
+        missionStepId: step.id,
+        forceTier: step.model_tier
+      });
+
+      if (followUp.content) {
+        finalContent = followUp.content;
+        console.log(`[worker] Step #${step.id}: Web-enriched response generated.`);
+      }
+    }
+
+    // SOCIAL MEDIA: Check if the agent wants to post content via [SOCIAL_POST:] tags
+    // WHY: Agents (especially Faye) can create social content and queue it to Buffer.
+    await social.resolveSocialTags(finalContent, step.assigned_agent_id);
+
     // Save the result (goes to in_review status for approval chain)
-    await missions.completeStep(step.id, result.content, 'text');
+    await missions.completeStep(step.id, finalContent, 'text');
 
     // Save to agent's memory
     await memory.saveMemory({
       agentId: step.assigned_agent_id,
       memoryType: 'task',
-      content: `Completed task: ${step.description}\n\nResult: ${result.content.substring(0, 500)}`,
+      content: `Completed task: ${step.description}\n\nResult: ${finalContent.substring(0, 500)}`,
       summary: `Completed: ${step.description.substring(0, 150)}`,
       topicTags,
       importance: 6,

@@ -457,6 +457,17 @@ async function buildAgentPrompt(agentId, topicTags = []) {
   }
 
   promptParts.push('\n---\n');
+  promptParts.push(`# WEB ACCESS
+You can access live web data when you need current information (prices, news, recent events, competitor info).
+- To search the web: include [WEB_SEARCH:your query here] in your response
+- To fetch a specific page: include [WEB_FETCH:https://example.com/page] in your response
+The system will fetch the data and provide it to you in a follow-up. Only use these when you genuinely need live/current data.
+
+# SOCIAL MEDIA
+To schedule a social media post (Twitter, LinkedIn, etc.), include [SOCIAL_POST:your post content here] in your response.
+The system will queue it to Buffer for publishing. Only use this when the task specifically involves creating social content.`);
+
+  promptParts.push('\n---\n');
   promptParts.push('IMPORTANT: You have persistent memory. Reference your past experiences, lessons, and recent activity when relevant. You remember everything above — it is YOUR lived experience, not external data.');
 
   const systemPrompt = promptParts.join('\n');

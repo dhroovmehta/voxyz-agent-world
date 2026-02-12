@@ -307,16 +307,235 @@ function truncate(text, maxLen) {
   return text.substring(0, maxLen - 3) + '...';
 }
 
+// ============================================================
+// TASK BOARDS (Decision 24 — each team gets a structured board)
+// ============================================================
+
+// Cache for task board database IDs
+let taskBoardCache = {};
+
+/**
+ * Get or create a task board (Notion database) for a team.
+ * Each team gets one board with columns: To Do, In Progress, In Review, Done.
+ * Tasks are assignable to agents AND Zero.
+ *
+ * @param {string} teamId - e.g. 'team-research'
+ * @returns {string|null} Database ID or null on failure
+ */
+async function getOrCreateTaskBoard(teamId) {
+  if (taskBoardCache[teamId]) return taskBoardCache[teamId];
+
+  const pages = await getTeamPages();
+  if (!pages) return null;
+
+  const parentPageId = pages.teamPages[teamId] || pages.hqPageId;
+
+  // Search for existing task board under the team page
+  const children = await notionRequest('GET', `/blocks/${parentPageId}/children?page_size=100`);
+  if (children && children.results) {
+    for (const block of children.results) {
+      if (block.type === 'child_database') {
+        const title = (block.child_database?.title || '').toLowerCase();
+        if (title.includes('task') || title.includes('board')) {
+          taskBoardCache[teamId] = block.id;
+          console.log(`[notion] Found task board for ${teamId}: ${block.id}`);
+          return block.id;
+        }
+      }
+    }
+  }
+
+  // Create a new task board database
+  const teamNames = {
+    'team-research': 'Research',
+    'team-execution': 'Execution',
+    'team-advisory': 'Advisory'
+  };
+  const teamName = teamNames[teamId] || teamId;
+
+  const db = await notionRequest('POST', '/databases', {
+    parent: { page_id: parentPageId },
+    title: [{ text: { content: `${teamName} Task Board` } }],
+    properties: {
+      'Task': {
+        title: {}
+      },
+      'Status': {
+        select: {
+          options: [
+            { name: 'To Do', color: 'gray' },
+            { name: 'In Progress', color: 'blue' },
+            { name: 'In Review', color: 'yellow' },
+            { name: 'Done', color: 'green' }
+          ]
+        }
+      },
+      'Assignee': {
+        rich_text: {}
+      },
+      'Priority': {
+        select: {
+          options: [
+            { name: 'Low', color: 'gray' },
+            { name: 'Normal', color: 'blue' },
+            { name: 'Urgent', color: 'red' }
+          ]
+        }
+      },
+      'Mission ID': {
+        number: {}
+      },
+      'Due Date': {
+        date: {}
+      }
+    }
+  });
+
+  if (db) {
+    taskBoardCache[teamId] = db.id;
+    console.log(`[notion] Created task board for ${teamId}: ${db.id}`);
+    return db.id;
+  }
+
+  return null;
+}
+
+/**
+ * Create a task on a team's task board.
+ *
+ * @param {Object} params
+ * @param {string} params.teamId - Which team's board
+ * @param {string} params.title - Task title
+ * @param {string} [params.assignee] - Agent name or 'Zero' for founder tasks
+ * @param {string} [params.status] - 'To Do' | 'In Progress' | 'In Review' | 'Done'
+ * @param {string} [params.priority] - 'Low' | 'Normal' | 'Urgent'
+ * @param {number} [params.missionId] - Related mission ID
+ * @param {string} [params.description] - Task details (added as page content)
+ * @returns {Object|null} Created page or null
+ */
+async function createTask({ teamId, title, assignee = null, status = 'To Do', priority = 'Normal', missionId = null, description = null }) {
+  const boardId = await getOrCreateTaskBoard(teamId);
+  if (!boardId) return null;
+
+  const properties = {
+    'Task': {
+      title: [{ text: { content: title } }]
+    },
+    'Status': {
+      select: { name: status }
+    },
+    'Priority': {
+      select: { name: priority }
+    }
+  };
+
+  if (assignee) {
+    properties['Assignee'] = {
+      rich_text: [{ text: { content: assignee } }]
+    };
+  }
+
+  if (missionId) {
+    properties['Mission ID'] = {
+      number: missionId
+    };
+  }
+
+  const body = {
+    parent: { database_id: boardId },
+    properties
+  };
+
+  // Add description as page content if provided
+  if (description) {
+    body.children = contentToBlocks(description).slice(0, 20);
+  }
+
+  const page = await notionRequest('POST', '/pages', body);
+
+  if (page) {
+    console.log(`[notion] Task created: "${title}" on ${teamId} board (${status})`);
+  }
+
+  return page;
+}
+
+/**
+ * Update a task's status on the board.
+ *
+ * @param {string} pageId - Notion page ID of the task
+ * @param {string} status - 'To Do' | 'In Progress' | 'In Review' | 'Done'
+ * @returns {Object|null} Updated page or null
+ */
+async function updateTaskStatus(pageId, status) {
+  const result = await notionRequest('PATCH', `/pages/${pageId}`, {
+    properties: {
+      'Status': {
+        select: { name: status }
+      }
+    }
+  });
+
+  if (result) {
+    console.log(`[notion] Task ${pageId} → ${status}`);
+  }
+
+  return result;
+}
+
+/**
+ * Get all tasks from a team's board, optionally filtered by status.
+ *
+ * @param {string} teamId
+ * @param {string} [status] - Filter by status (e.g. 'To Do')
+ * @returns {Array} Array of task objects
+ */
+async function getTeamTasks(teamId, status = null) {
+  const boardId = await getOrCreateTaskBoard(teamId);
+  if (!boardId) return [];
+
+  const body = {
+    page_size: 100,
+    sorts: [{ property: 'Status', direction: 'ascending' }]
+  };
+
+  if (status) {
+    body.filter = {
+      property: 'Status',
+      select: { equals: status }
+    };
+  }
+
+  const result = await notionRequest('POST', `/databases/${boardId}/query`, body);
+  if (!result || !result.results) return [];
+
+  return result.results.map(page => ({
+    id: page.id,
+    title: page.properties?.Task?.title?.[0]?.text?.content || 'Untitled',
+    status: page.properties?.Status?.select?.name || 'To Do',
+    assignee: page.properties?.Assignee?.rich_text?.[0]?.text?.content || null,
+    priority: page.properties?.Priority?.select?.name || 'Normal',
+    missionId: page.properties?.['Mission ID']?.number || null,
+    url: page.url
+  }));
+}
+
 /**
  * Clear the page cache (call when workspace structure changes).
  */
 function clearCache() {
   pageCache = null;
+  taskBoardCache = {};
 }
 
 module.exports = {
   publishDeliverable,
   publishDailySummary,
   getTeamPages,
+  // Task boards (Decision 24)
+  getOrCreateTaskBoard,
+  createTask,
+  updateTaskStatus,
+  getTeamTasks,
   clearCache
 };

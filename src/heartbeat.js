@@ -20,6 +20,9 @@ const policy = require('./lib/policy');
 const skills = require('./lib/skills');
 const alerts = require('./lib/alerts');
 const health = require('./lib/health');
+const gdrive = require('./lib/google_drive');
+const github = require('./lib/github');
+const notion = require('./lib/notion');
 
 const POLL_INTERVAL_MS = 30 * 1000; // 30 seconds
 let running = true;
@@ -27,6 +30,8 @@ let lastStandupDate = null; // Track if standup ran today
 let lastCostAlertDate = null; // Track if cost alert fired today
 let lastHealthCheckTime = 0; // Timestamp of last health check run
 let lastDailySummaryDate = null; // Track if daily summary ran today
+let lastBackupDate = null; // Track if backup ran today
+let lastGitPushDate = null; // Track if GitHub push ran today
 const HEALTH_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ============================================================
@@ -170,6 +175,17 @@ async function processProposals() {
         description: `Mission #${mission.id}: "${proposal.title}" assigned to ${assignee.display_name}`,
         data: { missionId: mission.id, proposalId: proposal.id }
       });
+
+      // Sync to Notion task board (non-blocking — don't fail the mission if Notion is down)
+      notion.createTask({
+        teamId,
+        title: proposal.title || taskDescription.substring(0, 200),
+        assignee: assignee.display_name,
+        status: 'In Progress',
+        priority: proposal.priority === 'urgent' ? 'Urgent' : 'Normal',
+        missionId: mission.id,
+        description: taskDescription
+      }).catch(err => console.error(`[heartbeat] Notion task sync failed: ${err.message}`));
 
       console.log(`[heartbeat] Mission #${mission.id} created, assigned to ${assignee.display_name} (${modelTier})`);
 
@@ -525,6 +541,8 @@ async function runMonitoring() {
     await checkCostAlert();
     await checkHealthPeriodic();
     await checkDailySummary();
+    await checkDailyBackup();
+    await checkDailyGitPush();
   } catch (err) {
     console.error('[heartbeat] Monitoring error:', err.message);
   }
@@ -678,6 +696,99 @@ async function generateDailySummary() {
   });
 
   console.log('[heartbeat] Daily summary sent');
+}
+
+/**
+ * Run daily database backup to Google Drive at 3:00am ET.
+ * Decision 23: Automated daily DB backup. Zero cost.
+ */
+async function checkDailyBackup() {
+  const tz = 'America/New_York';
+  const targetH = 3;
+  const targetM = 0;
+
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const currentDate = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+  const hour = parseInt(parts.find(p => p.type === 'hour').value);
+  const minute = parseInt(parts.find(p => p.type === 'minute').value);
+
+  if (hour === targetH && minute >= targetM && minute < targetM + 5 && lastBackupDate !== currentDate) {
+    lastBackupDate = currentDate;
+    console.log(`[heartbeat] Running daily backup for ${currentDate}...`);
+
+    try {
+      const result = await gdrive.backupDatabase();
+
+      if (result.success) {
+        await events.logEvent({
+          eventType: 'daily_backup',
+          severity: 'info',
+          description: `Daily backup complete: ${result.tablesBackedUp}/${result.totalTables} tables to Google Drive`
+        });
+      } else {
+        await alerts.sendAlert({
+          subject: 'Daily Backup Failed',
+          body: `Backup errors: ${result.errors.join(', ')}`,
+          severity: 'error'
+        });
+      }
+    } catch (err) {
+      console.error('[heartbeat] Backup error:', err.message);
+    }
+  }
+}
+
+/**
+ * Push agent state to GitHub at 4:00am ET daily.
+ * Decision 12: Source code + agent state in GitHub. Deliverables in Notion/Drive only.
+ */
+async function checkDailyGitPush() {
+  const tz = 'America/New_York';
+  const targetH = 4;
+  const targetM = 0;
+
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const currentDate = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+  const hour = parseInt(parts.find(p => p.type === 'hour').value);
+  const minute = parseInt(parts.find(p => p.type === 'minute').value);
+
+  if (hour === targetH && minute >= targetM && minute < targetM + 5 && lastGitPushDate !== currentDate) {
+    lastGitPushDate = currentDate;
+    console.log(`[heartbeat] Running daily GitHub state push for ${currentDate}...`);
+
+    try {
+      const result = await github.pushDailyState();
+
+      if (result.success) {
+        await events.logEvent({
+          eventType: 'github_push',
+          severity: 'info',
+          description: `GitHub state push: ${result.filesUpdated}/${result.totalFiles} files`
+        });
+      } else if (result.errors.length > 0 && !result.errors[0].includes('not set')) {
+        // Only alert on real failures, not missing env vars
+        await alerts.sendAlert({
+          subject: 'GitHub State Push Failed',
+          body: `Errors: ${result.errors.join(', ')}`,
+          severity: 'warning'
+        });
+      }
+    } catch (err) {
+      console.error('[heartbeat] GitHub push error:', err.message);
+    }
+  }
 }
 
 // ============================================================
