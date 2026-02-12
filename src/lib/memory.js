@@ -202,9 +202,12 @@ async function saveConversation({
  * @returns {Object} { recent, topicMatched, lessons, formatted }
  */
 async function retrieveMemories(agentId, topicTags = []) {
+  // Pull 15 topic-matched memories (up from 10) to ensure full multi-turn
+  // conversations are retrieved even days later. A 5-turn casual chat = 10 memory
+  // rows (5 from Zero, 5 responses). 15 gives us room for the full exchange.
   const [recent, topicMatched, lessons] = await Promise.all([
     getRecentMemories(agentId, 10),
-    topicTags.length > 0 ? getTopicMemories(agentId, topicTags, 10) : [],
+    topicTags.length > 0 ? getTopicMemories(agentId, topicTags, 15) : [],
     getLessons(agentId, 5)
   ]);
 

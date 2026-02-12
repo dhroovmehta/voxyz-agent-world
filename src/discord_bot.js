@@ -124,7 +124,14 @@ async function handleFrasierMessage(message, content) {
     return;
   }
 
-  const promptData = await memory.buildAgentPrompt(frasierAgent.id, ['founder-interaction', 'founder-request', 'delegation', 'discord']);
+  // Extract REAL topic tags from what Zero said — not generic labels.
+  // WHY: If Zero says "what about that Super Bowl game?", we need to pull memories
+  // tagged with 'super-bowl', 'football', 'nfl' — not just 'founder-interaction'.
+  // This is what lets Frasier recall a casual Sunday conversation on Saturday.
+  const contentTopics = extractConversationTopics(content);
+  const retrievalTags = ['founder-interaction', ...contentTopics];
+
+  const promptData = await memory.buildAgentPrompt(frasierAgent.id, retrievalTags);
   if (promptData.error) {
     await message.reply(`Error loading Frasier: ${promptData.error}`);
     return;
@@ -138,13 +145,14 @@ async function handleFrasierMessage(message, content) {
 As Chief of Staff, determine the appropriate action:
 1. If this is a task or request → acknowledge it, state which team/agent you'll route it to, and what the expected deliverable is
 2. If this is a question → answer it directly from your knowledge and memory
-3. If this requires approval → explain what needs approval and why
+3. If this is casual conversation → engage naturally, share your genuine thoughts, be a real person. Reference past conversations if relevant.
+4. If this requires approval → explain what needs approval and why
 
-Always be concise, professional, and action-oriented. Reference relevant context from your memory.
+Always be concise, professional, and action-oriented. Reference relevant context from your memory. If Zero is referencing a past conversation, recall what you both said and build on it.
 
 IMPORTANT: End your response with one of these tags so the system knows what to do:
 [ACTION:PROPOSAL] — if this should become a mission
-[ACTION:RESPONSE] — if this is just a conversation reply
+[ACTION:RESPONSE] — if this is just a conversation reply (including casual chat)
 [ACTION:APPROVAL_NEEDED] — if you need Zero's approval for something`;
 
   // Call LLM as Frasier — always Tier 1, Frasier is just routing/responding
@@ -181,21 +189,38 @@ IMPORTANT: End your response with one of these tags so the system knows what to 
     await sendSplit(message.channel, cleanResponse);
   }
 
-  // Save to Frasier's memory — importance 8 because founder messages are strategic context
+  // Save FULL exchange to Frasier's memory with content-based topic tags.
+  // Both Zero's message AND Frasier's response are saved so the complete
+  // back-and-forth is available on future retrieval.
+  const saveTags = ['founder-interaction', 'founder-request', ...contentTopics];
+
+  // Save Zero's message as its own memory (so individual turns are retrievable)
   await memory.saveMemory({
     agentId: frasierAgent.id,
     memoryType: 'conversation',
-    content: `Zero said: "${content}"\n\nI responded: "${response.substring(0, 300)}"`,
-    summary: `Conversation with Zero: ${content.substring(0, 100)}`,
-    topicTags: ['founder-interaction', 'founder-request', 'discord', 'delegation'],
+    content: `Zero said: "${content}"`,
+    summary: `Zero: ${content.substring(0, 150)}`,
+    topicTags: saveTags,
     importance: 8,
-    sourceType: 'conversation'
+    sourceType: 'conversation',
+    relatedAgentIds: ['zero']
+  });
+
+  // Save Frasier's response as its own memory
+  const cleanResponse = response.replace(/\[ACTION:\w+\]/g, '').trim();
+  await memory.saveMemory({
+    agentId: frasierAgent.id,
+    memoryType: 'conversation',
+    content: `I said to Zero: "${cleanResponse}"`,
+    summary: `My response to Zero: ${cleanResponse.substring(0, 150)}`,
+    topicTags: saveTags,
+    importance: 7,
+    sourceType: 'conversation',
+    relatedAgentIds: ['zero']
   });
 
   // LESSON EXTRACTION: If Zero gives a directive, preference, or strategic instruction,
   // save it as a permanent lesson so Frasier NEVER forgets it.
-  // WHY: Memories rotate out of the 10-recent window. Lessons are always included (top 5).
-  // This means "our target is crypto traders" stays in Frasier's brain forever.
   const isDirective = detectFounderDirective(content);
   if (isDirective) {
     await memory.saveLesson({
@@ -203,7 +228,7 @@ IMPORTANT: End your response with one of these tags so the system knows what to 
       lesson: `Zero's instruction: "${content.substring(0, 400)}"`,
       context: `Founder directive via Discord`,
       category: 'founder-directive',
-      importance: 9 // Highest — founder instructions override everything
+      importance: 9
     });
     console.log(`[discord] Saved founder directive as permanent lesson: "${content.substring(0, 80)}..."`);
   }
@@ -669,6 +694,66 @@ async function sendSplit(channel, text) {
   for (const chunk of chunks) {
     await channel.send(chunk);
   }
+}
+
+/**
+ * Extract real conversation topics from message content.
+ * WHY: Generic tags like 'founder-interaction' don't help retrieval when Zero says
+ * "remember our Super Bowl conversation?" — we need 'super-bowl', 'football', 'nfl'
+ * as tags so topic-based retrieval pulls the right memories 6 days later.
+ *
+ * Two strategies:
+ * 1. Keyword matching against known topic categories
+ * 2. N-gram extraction: pull 2-3 word phrases as topic slugs
+ *
+ * This lets casual conversation topics ("Super Bowl", "that restaurant", "crypto prices")
+ * become durable retrieval keys.
+ */
+function extractConversationTopics(content) {
+  const lower = content.toLowerCase();
+  const topics = [];
+
+  // Strategy 1: Known topic categories (expandable)
+  const topicKeywords = {
+    'football': ['football', 'nfl', 'super bowl', 'superbowl', 'touchdown', 'quarterback', 'halftime'],
+    'basketball': ['basketball', 'nba', 'lakers', 'celtics', 'playoffs', 'march madness'],
+    'sports': ['game', 'score', 'team', 'player', 'season', 'championship', 'finals'],
+    'crypto': ['crypto', 'bitcoin', 'ethereum', 'eth', 'btc', 'token', 'blockchain', 'defi'],
+    'markets': ['market', 'stocks', 'trading', 'portfolio', 'investment', 'sp500', 'nasdaq'],
+    'ai': ['ai', 'artificial intelligence', 'llm', 'gpt', 'claude', 'machine learning'],
+    'business': ['revenue', 'profit', 'startup', 'company', 'client', 'customer', 'sales'],
+    'tech': ['software', 'app', 'code', 'api', 'deploy', 'server', 'database'],
+    'food': ['restaurant', 'food', 'dinner', 'lunch', 'cooking', 'recipe'],
+    'travel': ['travel', 'trip', 'flight', 'hotel', 'vacation', 'city'],
+    'movies': ['movie', 'film', 'netflix', 'show', 'series', 'watch', 'actor'],
+    'music': ['music', 'song', 'album', 'concert', 'artist', 'playlist'],
+    'politics': ['election', 'president', 'congress', 'vote', 'policy', 'government'],
+    'health': ['health', 'workout', 'gym', 'diet', 'sleep', 'running']
+  };
+
+  for (const [topic, keywords] of Object.entries(topicKeywords)) {
+    if (keywords.some(kw => lower.includes(kw))) {
+      topics.push(topic);
+    }
+  }
+
+  // Strategy 2: Extract notable noun phrases as slug tags.
+  // Pull capitalized multi-word phrases (proper nouns) and common bigrams.
+  // "Super Bowl" → 'super-bowl', "Patrick Mahomes" → 'patrick-mahomes'
+  const properNouns = content.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/g) || [];
+  for (const phrase of properNouns.slice(0, 5)) {
+    const slug = phrase.toLowerCase().replace(/\s+/g, '-');
+    if (slug.length >= 3 && slug.length <= 30 && !topics.includes(slug)) {
+      topics.push(slug);
+    }
+  }
+
+  // Always include a general founder tag for baseline retrieval
+  if (topics.length === 0) {
+    topics.push('casual-chat');
+  }
+
+  return topics;
 }
 
 /**
