@@ -55,7 +55,12 @@ function getDriveClient() {
 
     const auth = new google.auth.GoogleAuth({
       credentials: key,
-      scopes: ['https://www.googleapis.com/auth/drive'],
+      scopes: [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/documents',
+        'https://www.googleapis.com/auth/spreadsheets'
+      ],
       clientOptions: impersonateEmail ? { subject: impersonateEmail } : {}
     });
 
