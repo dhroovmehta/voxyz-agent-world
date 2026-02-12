@@ -6,6 +6,11 @@
 // Two capabilities:
 // 1. fetchPage(url) — GET a URL, strip HTML to plain text
 // 2. searchWeb(query) — Search via DuckDuckGo HTML (no API key needed)
+//
+// CRITICAL: Must use a real browser User-Agent. DuckDuckGo returns empty/different
+// HTML for bot UAs. Learned this the hard way — VoxYZBot UA got zero results.
+
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // ============================================================
 // PAGE FETCHING (HTTP GET + HTML-to-text)
@@ -24,7 +29,7 @@ async function fetchPage(url, maxChars = 8000) {
   try {
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; VoxYZBot/1.0; +https://voxyz.ai)',
+        'User-Agent': BROWSER_UA,
         'Accept': 'text/html,application/xhtml+xml,application/json,text/plain'
       },
       redirect: 'follow',
@@ -77,7 +82,7 @@ async function searchWeb(query, maxResults = 5) {
     const encoded = encodeURIComponent(query);
     const response = await fetch(`https://html.duckduckgo.com/html/?q=${encoded}`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; VoxYZBot/1.0; +https://voxyz.ai)',
+        'User-Agent': BROWSER_UA,
         'Accept': 'text/html'
       },
       signal: AbortSignal.timeout(10000)
@@ -217,19 +222,27 @@ function htmlToText(html) {
 
 /**
  * Parse DuckDuckGo HTML search results into structured data.
+ * WHY split on just "result__body": DDG uses multi-class attributes like
+ * class="links_main links_deep result__body", so splitting on the exact
+ * class="result__body" fails. Learned this the hard way — it's why web
+ * search returned 0 results despite getting valid HTML.
  */
 function parseSearchResults(html, maxResults) {
   const results = [];
 
-  // DuckDuckGo HTML results are in <a class="result__a"> tags
-  // with snippets in <a class="result__snippet"> tags
-  const resultBlocks = html.split(/class="result__body"/gi);
+  // Split on result__body — DDG wraps each result in a div with this class
+  // among others (links_main, links_deep, etc.)
+  const resultBlocks = html.split(/result__body/gi);
 
   for (let i = 1; i < resultBlocks.length && results.length < maxResults; i++) {
     const block = resultBlocks[i];
 
     // Extract URL and title from result__a link
-    const linkMatch = block.match(/class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+    // Handles both attribute orders: class then href, or href then class
+    let linkMatch = block.match(/class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!linkMatch) {
+      linkMatch = block.match(/href="([^"]*)"[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/i);
+    }
     if (!linkMatch) continue;
 
     let url = linkMatch[1];
@@ -240,6 +253,9 @@ function parseSearchResults(html, maxResults) {
     if (uddgMatch) {
       url = decodeURIComponent(uddgMatch[1]);
     }
+
+    // Clean up protocol-relative URLs
+    if (url.startsWith('//')) url = 'https:' + url;
 
     // Extract snippet
     const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
