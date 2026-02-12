@@ -157,6 +157,11 @@ async function processNextStep() {
     // Track skill usage — agent grows through doing
     await skills.trackSkillUsage(step.assigned_agent_id, step.description);
 
+    // LESSON GENERATION: Every 5th task, the agent reflects and distills a lesson.
+    // WHY: Task memories are raw data. Lessons are distilled wisdom that persists
+    // in every future prompt — this is how agents actually get smarter over time.
+    await maybeGenerateLesson(step.assigned_agent_id, step.description, finalContent, promptData);
+
     await events.logEvent({
       eventType: 'task_completed',
       agentId: step.assigned_agent_id,
@@ -263,6 +268,15 @@ async function processNextReview() {
         sourceType: 'review'
       });
 
+      // LESSON FROM REJECTION: The original agent learns from the feedback.
+      // WHY: Rejection feedback is the highest-value learning signal. An agent
+      // who remembers "my research lacked competitor analysis" won't repeat that mistake.
+      await generateLessonFromRejection(
+        step.assigned_agent_id,
+        step.description,
+        result.content
+      );
+
       console.log(`[worker] Review #${approval.id}: REJECTED. Step sent back for revision.`);
 
     } else {
@@ -304,6 +318,102 @@ async function processNextReview() {
     // Auto-approve on error to prevent blocking
     await missions.submitReview(approval.id, { status: 'approved', feedback: `Auto-approved: error during review (${err.message})` });
     await missions.approveStep(step.id);
+  }
+}
+
+// ============================================================
+// LESSON GENERATION (how agents get smarter over time)
+// ============================================================
+
+/**
+ * Every 5th completed task, ask the agent to reflect and distill a lesson.
+ * Lessons are always included in future prompts (top 5 by importance),
+ * so they compound — the agent genuinely improves over time.
+ *
+ * Cheap: one Tier 1 call (~$0.001) per 5 tasks.
+ */
+async function maybeGenerateLesson(agentId, taskDescription, taskResult, promptData) {
+  try {
+    // Count this agent's task memories
+    const { count, error } = await supabase
+      .from('agent_memories')
+      .select('*', { count: 'exact', head: true })
+      .eq('agent_id', agentId)
+      .eq('memory_type', 'task');
+
+    if (error || !count) return;
+
+    // Only reflect every 5th task
+    if (count % 5 !== 0) return;
+
+    console.log(`[worker] ${agentId} has ${count} tasks — triggering reflection...`);
+
+    const reflectionPrompt = `You just completed your ${count}th task. Take a moment to reflect.
+
+Your most recent task was:
+"${taskDescription}"
+
+Your output (summary):
+"${taskResult.substring(0, 600)}"
+
+Based on your accumulated experience (not just this task), distill ONE concise lesson you've learned. This lesson will be remembered permanently and influence all your future work.
+
+Format: Start with the lesson in one sentence, then optionally add 1-2 sentences of context.
+Example: "Always include competitor pricing when doing market analysis — without it, the research feels incomplete and gets sent back for revision."
+
+Your lesson:`;
+
+    const result = await models.callLLM({
+      systemPrompt: promptData.systemPrompt,
+      userMessage: reflectionPrompt,
+      agentId,
+      forceTier: 'tier1'
+    });
+
+    if (result.error || !result.content) return;
+
+    // Extract the lesson (first sentence or first 300 chars)
+    const lessonText = result.content.trim();
+    const firstSentence = lessonText.split(/[.!?]\s/)[0] + '.';
+
+    await memory.saveLesson({
+      agentId,
+      lesson: lessonText.substring(0, 500),
+      context: `Reflected after ${count} completed tasks. Last task: "${taskDescription.substring(0, 150)}"`,
+      category: extractTopicTags(taskDescription)[0] || 'general',
+      importance: 7
+    });
+
+    console.log(`[worker] Lesson saved for ${agentId}: "${firstSentence.substring(0, 80)}..."`);
+
+  } catch (err) {
+    // Lesson generation is non-critical — never fail the task over it
+    console.error(`[worker] Lesson generation failed for ${agentId}: ${err.message}`);
+  }
+}
+
+/**
+ * When QA rejects an agent's work, distill the feedback into a lesson.
+ * No extra LLM call needed — the rejection feedback IS the lesson.
+ * These are high-value: "my research lacked X" prevents the same mistake.
+ */
+async function generateLessonFromRejection(agentId, taskDescription, rejectionFeedback) {
+  try {
+    // Extract the key criticism from the rejection
+    const lesson = `Work rejected: "${taskDescription.substring(0, 100)}". Feedback: ${rejectionFeedback.substring(0, 400)}`;
+
+    await memory.saveLesson({
+      agentId,
+      lesson,
+      context: `QA rejection feedback for task: "${taskDescription.substring(0, 150)}"`,
+      category: 'quality',
+      importance: 8 // Higher importance — rejection lessons are the most valuable
+    });
+
+    console.log(`[worker] Rejection lesson saved for ${agentId}`);
+
+  } catch (err) {
+    console.error(`[worker] Rejection lesson failed for ${agentId}: ${err.message}`);
   }
 }
 
