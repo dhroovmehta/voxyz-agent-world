@@ -24,6 +24,7 @@ const memory = require('./lib/memory');
 const policy = require('./lib/policy');
 const notion = require('./lib/notion');
 const gdrive = require('./lib/google_drive');
+const alerts = require('./lib/alerts');
 
 // ============================================================
 // DISCORD CLIENT SETUP
@@ -58,6 +59,9 @@ client.once(Events.ClientReady, async (c) => {
   }
 
   console.log(`[discord] Cached ${Object.keys(channels).length} channels`);
+
+  // Share channel map with alerts module so heartbeat can post to Discord
+  alerts.setDiscordChannels(channels);
 
   await events.logEvent({
     eventType: 'discord_bot_started',

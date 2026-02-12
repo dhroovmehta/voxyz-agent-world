@@ -18,10 +18,16 @@ const models = require('./lib/models');
 const events = require('./lib/events');
 const policy = require('./lib/policy');
 const skills = require('./lib/skills');
+const alerts = require('./lib/alerts');
+const health = require('./lib/health');
 
 const POLL_INTERVAL_MS = 30 * 1000; // 30 seconds
 let running = true;
 let lastStandupDate = null; // Track if standup ran today
+let lastCostAlertDate = null; // Track if cost alert fired today
+let lastHealthCheckTime = 0; // Timestamp of last health check run
+let lastDailySummaryDate = null; // Track if daily summary ran today
+const HEALTH_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ============================================================
 // MAIN LOOP
@@ -69,6 +75,9 @@ async function tick() {
 
   // 5. Schedule daily standup (time-based trigger)
   await checkDailyStandup();
+
+  // 6. Monitoring: cost alerts, health checks, daily summary
+  await runMonitoring();
 }
 
 // ============================================================
@@ -499,6 +508,176 @@ async function checkMissions() {
       });
     }
   }
+}
+
+// ============================================================
+// MONITORING (cost alerts, health checks, daily summary)
+// ============================================================
+
+/**
+ * Run monitoring checks at appropriate intervals.
+ * - Cost alerts: every tick (30s) — fires once per day max
+ * - Health checks: every 10 minutes
+ * - Daily summary: once daily at ~9:30am ET
+ */
+async function runMonitoring() {
+  try {
+    await checkCostAlert();
+    await checkHealthPeriodic();
+    await checkDailySummary();
+  } catch (err) {
+    console.error('[heartbeat] Monitoring error:', err.message);
+  }
+}
+
+/**
+ * Check if daily LLM costs exceed the threshold.
+ * Fires a single alert per day when threshold is crossed.
+ */
+async function checkCostAlert() {
+  // Get today's date string for deduplication
+  const today = new Date().toISOString().split('T')[0];
+  if (lastCostAlertDate === today) return; // Already alerted today
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const [costs, threshold] = await Promise.all([
+    models.getModelCosts(todayStart.toISOString()),
+    policy.getCostAlertThreshold()
+  ]);
+
+  if (!costs) return;
+
+  const dailyCost = costs.total.cost;
+  const limit = threshold.dailyThresholdUsd;
+
+  if (dailyCost >= limit) {
+    lastCostAlertDate = today;
+
+    const body = [
+      `Daily LLM spend has reached $${dailyCost.toFixed(4)} (threshold: $${limit})`,
+      '',
+      `Tier 1 (MiniMax): ${costs.tier1.calls} calls, $${costs.tier1.cost.toFixed(4)}`,
+      `Tier 2 (Manus):   ${costs.tier2.calls} calls`,
+      `Tier 3 (Claude):  ${costs.tier3.calls} calls, $${costs.tier3.cost.toFixed(4)}`,
+      `Total tokens: ${costs.total.tokens.toLocaleString()}`
+    ].join('\n');
+
+    await alerts.sendAlert({
+      subject: `Cost Alert: $${dailyCost.toFixed(2)} today (limit: $${limit})`,
+      body,
+      severity: 'warning'
+    });
+
+    await events.logEvent({
+      eventType: 'cost_alert',
+      severity: 'warning',
+      description: `Daily cost $${dailyCost.toFixed(4)} exceeded threshold $${limit}`,
+      data: { dailyCost, threshold: limit }
+    });
+
+    console.log(`[heartbeat] Cost alert fired: $${dailyCost.toFixed(4)} / $${limit}`);
+  }
+}
+
+/**
+ * Run health checks every 10 minutes.
+ * Alerts on any failures.
+ */
+async function checkHealthPeriodic() {
+  const now = Date.now();
+  if (now - lastHealthCheckTime < HEALTH_CHECK_INTERVAL_MS) return;
+  lastHealthCheckTime = now;
+
+  const result = await health.runAllHealthChecks();
+
+  if (!result.allPassing) {
+    const failList = result.failedComponents.join(', ');
+    const details = result.checks
+      .filter(c => c.status === 'fail')
+      .map(c => `${c.component}: ${c.details || 'Unknown error'}`)
+      .join('\n');
+
+    await alerts.sendAlert({
+      subject: `Health Check Failed: ${failList}`,
+      body: details,
+      severity: 'error'
+    });
+  }
+}
+
+/**
+ * Send a daily summary at ~9:30am ET.
+ * Compiles costs, errors, health status, and activity into one report.
+ */
+async function checkDailySummary() {
+  const schedule = await policy.getDailySummarySchedule();
+  const tz = schedule.timezone || 'America/New_York';
+
+  // Daily summary runs at 9:30am (30 min after standup at 9:00am)
+  const targetH = 9;
+  const targetM = 30;
+
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const currentDate = `${parts.find(p => p.type === 'year').value}-${parts.find(p => p.type === 'month').value}-${parts.find(p => p.type === 'day').value}`;
+  const hour = parseInt(parts.find(p => p.type === 'hour').value);
+  const minute = parseInt(parts.find(p => p.type === 'minute').value);
+
+  if (hour === targetH && minute >= targetM && minute < targetM + 5 && lastDailySummaryDate !== currentDate) {
+    lastDailySummaryDate = currentDate;
+    console.log(`[heartbeat] Generating daily summary for ${currentDate}...`);
+    await generateDailySummary();
+  }
+}
+
+/**
+ * Compile and send the daily summary report.
+ */
+async function generateDailySummary() {
+  // Yesterday start for 24-hour lookback
+  const since = new Date();
+  since.setDate(since.getDate() - 1);
+  since.setHours(0, 0, 0, 0);
+  const sinceIso = since.toISOString();
+
+  const [costs, errors, healthStatus, activeAgents, eventSummary] = await Promise.all([
+    models.getModelCosts(sinceIso),
+    events.getErrorsSince(sinceIso),
+    health.runAllHealthChecks(),
+    agents.getAllActiveAgents(),
+    events.getEventSummary(sinceIso)
+  ]);
+
+  const summary = alerts.formatDailySummary({
+    costs,
+    errors,
+    healthStatus,
+    agentCount: activeAgents.length,
+    eventSummary
+  });
+
+  // Send to both daily-summary channel and email
+  await alerts.sendAlert({
+    subject: `Daily Summary — ${new Date().toLocaleDateString('en-US')}`,
+    body: summary,
+    severity: 'info',
+    channel: 'daily-summary'
+  });
+
+  await events.logEvent({
+    eventType: 'daily_summary',
+    severity: 'info',
+    description: `Daily summary sent: ${activeAgents.length} agents, $${costs?.total.cost.toFixed(4) || '0'} costs, ${errors?.length || 0} errors`
+  });
+
+  console.log('[heartbeat] Daily summary sent');
 }
 
 // ============================================================
