@@ -184,10 +184,23 @@ async function prefetchUrls(text) {
   const fetched = [];
 
   for (const rawUrl of urls.slice(0, 3)) { // cap at 3 URLs to limit latency
-    const url = rewriteUrl(rawUrl);
-    const isTwitter = url.includes('fxtwitter.com');
-
     try {
+      // YouTube — dedicated extractor for metadata + transcript
+      const ytId = extractYouTubeId(rawUrl);
+      if (ytId) {
+        const ytResult = await fetchYouTube(ytId, 4000);
+        if (ytResult.content) {
+          fetched.push({ originalUrl: rawUrl, title: ytResult.title, content: ytResult.content });
+          continue;
+        }
+        if (ytResult.error) console.log(`[web] YouTube pre-fetch failed: ${ytResult.error}`);
+        continue; // Don't fall through to generic fetch for YouTube URLs
+      }
+
+      // Twitter/X — rewrite to fxtwitter API
+      const url = rewriteUrl(rawUrl);
+      const isTwitter = url.includes('fxtwitter.com');
+
       const result = await fetchPage(url, 4000);
       if (result.error) {
         console.log(`[web] Pre-fetch failed for ${rawUrl}: ${result.error}`);
@@ -241,6 +254,171 @@ function rewriteUrl(url) {
   }
 
   return url;
+}
+
+// ============================================================
+// YOUTUBE EXTRACTION (metadata + transcript, no API key)
+// ============================================================
+
+/**
+ * Extract video ID from any YouTube URL format.
+ * Handles: youtube.com/watch?v=, youtu.be/, youtube.com/shorts/, youtube.com/embed/
+ */
+function extractYouTubeId(url) {
+  const patterns = [
+    /(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/i
+  ];
+  for (const p of patterns) {
+    const match = url.match(p);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Fetch YouTube video metadata + transcript.
+ * WHY: YouTube.com returns a massive HTML page with embedded JSON containing all
+ * video metadata. We extract ytInitialPlayerResponse for title, description,
+ * channel, views, duration. Transcript via innertube get_transcript endpoint.
+ *
+ * @param {string} videoId - YouTube video ID (11 chars)
+ * @param {number} [maxChars=6000] - Max chars for combined output
+ * @returns {{ content: string, title: string, error: string|null }}
+ */
+async function fetchYouTube(videoId, maxChars = 6000) {
+  try {
+    const pageUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const response = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml'
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!response.ok) {
+      return { content: null, title: null, error: `YouTube HTTP ${response.status}` };
+    }
+
+    const html = await response.text();
+
+    // Extract ytInitialPlayerResponse — contains all video metadata
+    const playerMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\})\s*;\s*(?:var\s|<\/script)/s);
+    if (!playerMatch) {
+      return { content: null, title: null, error: 'Could not parse YouTube page' };
+    }
+
+    const player = JSON.parse(playerMatch[1]);
+    const details = player.videoDetails || {};
+
+    const title = details.title || 'Unknown Video';
+    const author = details.author || 'Unknown Channel';
+    const views = Number(details.viewCount || 0).toLocaleString();
+    const durationSec = Number(details.lengthSeconds || 0);
+    const durationMin = Math.floor(durationSec / 60);
+    const durationStr = durationSec > 0 ? `${durationMin}m ${durationSec % 60}s` : 'unknown';
+    const description = (details.shortDescription || '').substring(0, 2000);
+
+    // Build metadata section
+    const lines = [
+      `YouTube Video: ${title}`,
+      `Channel: ${author}`,
+      `Views: ${views} | Duration: ${durationStr}`,
+      `URL: https://youtube.com/watch?v=${videoId}`,
+      '',
+      '--- Description ---',
+      description
+    ];
+
+    // Attempt transcript extraction (best-effort — YouTube blocks this since mid-2025)
+    const transcript = await extractYouTubeTranscript(html, videoId);
+    if (transcript) {
+      const maxTranscript = maxChars - lines.join('\n').length - 100;
+      lines.push('');
+      lines.push('--- Transcript ---');
+      lines.push(transcript.substring(0, Math.max(maxTranscript, 1000)));
+    }
+
+    const content = lines.join('\n').substring(0, maxChars);
+    console.log(`[web] YouTube: "${title}" by ${author} (${views} views${transcript ? ', transcript extracted' : ', no transcript'})`);
+
+    return { content, title: `YouTube: ${title}`, error: null };
+  } catch (err) {
+    console.error(`[web] YouTube fetch failed for ${videoId}: ${err.message}`);
+    return { content: null, title: null, error: err.message };
+  }
+}
+
+/**
+ * Try to extract transcript from YouTube page via innertube get_transcript.
+ * Best-effort: YouTube blocked server-side caption access mid-2025. This may
+ * return null. When it does, agents still get metadata (title, description, etc.)
+ * which covers most research use cases.
+ */
+async function extractYouTubeTranscript(html, videoId) {
+  try {
+    // Extract innertube params from the page
+    const apiKeyMatch = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
+    const visitorMatch = html.match(/"VISITOR_DATA":"([^"]+)"/);
+    const versionMatch = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/);
+    const paramsMatch = html.match(/"getTranscriptEndpoint"\s*:\s*\{\s*"params"\s*:\s*"([^"]+)"/);
+
+    if (!apiKeyMatch || !paramsMatch) return null;
+
+    const cookies = [];
+    // Attempt to get cookies from initial page for session continuity
+    const response = await fetch(`https://www.youtube.com/youtubei/v1/get_transcript?key=${apiKeyMatch[1]}`, {
+      method: 'POST',
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/json',
+        'X-YouTube-Client-Name': '1',
+        'X-YouTube-Client-Version': versionMatch ? versionMatch[1] : '2.20260211.01.00',
+        'Origin': 'https://www.youtube.com',
+        'Referer': `https://www.youtube.com/watch?v=${videoId}`
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'WEB',
+            clientVersion: versionMatch ? versionMatch[1] : '2.20260211.01.00',
+            visitorData: visitorMatch ? visitorMatch[1] : undefined
+          }
+        },
+        params: paramsMatch[1]
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const actions = data.actions || [];
+    if (actions.length === 0) return null;
+
+    // Navigate the deeply nested transcript structure
+    const panel = actions[0]?.updateEngagementPanelAction?.content
+      ?.transcriptRenderer?.content?.transcriptSearchPanelRenderer;
+    if (!panel) return null;
+
+    const segments = panel.body?.transcriptSegmentListRenderer?.initialSegments || [];
+    if (segments.length === 0) return null;
+
+    const lines = [];
+    for (const seg of segments) {
+      const renderer = seg.transcriptSegmentRenderer;
+      if (renderer) {
+        const text = renderer.snippet?.runs?.map(r => r.text).join('') || '';
+        if (text.trim()) lines.push(text.trim());
+      }
+    }
+
+    return lines.length > 0 ? lines.join(' ') : null;
+  } catch {
+    return null; // Transcript extraction is best-effort
+  }
 }
 
 // ============================================================
