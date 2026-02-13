@@ -1,0 +1,29 @@
+[
+  {
+    "id": "team-execution",
+    "name": "Business Startup & Execution",
+    "description": "Execution team: broad team of sub-agents handling day-to-day business operations.",
+    "status": "dormant",
+    "lead_agent_id": null,
+    "created_at": "2026-02-11T19:44:24.388147+00:00",
+    "updated_at": "2026-02-11T19:44:24.388147+00:00"
+  },
+  {
+    "id": "team-advisory",
+    "name": "SMB Advisory",
+    "description": "Advisory team: M&A advisory, CIM review, deal structuring, financing expert.",
+    "status": "dormant",
+    "lead_agent_id": null,
+    "created_at": "2026-02-11T19:44:24.388147+00:00",
+    "updated_at": "2026-02-11T19:44:24.388147+00:00"
+  },
+  {
+    "id": "team-research",
+    "name": "Business Idea & Concept Research",
+    "description": "Research team: strategist, research analyst, financial/business analyst. Identifies viable revenue-generating business ideas.",
+    "status": "active",
+    "lead_agent_id": "agent-gendo-1770840214305",
+    "created_at": "2026-02-11T19:44:24.388147+00:00",
+    "updated_at": "2026-02-11T20:03:34.616+00:00"
+  }
+]
