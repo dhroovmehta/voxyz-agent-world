@@ -1,4 +1,4 @@
-# Product Requirements Document: VoxYZ Agent World
+# Product Requirements Document: Frasier
 
 **Version:** 1.0  
 **Date:** February 11, 2026  
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-VoxYZ Agent World is a fully autonomous AI organization system consisting of 7 specialized AI agents that operate 24/7 with minimal founder oversight. The system enables a non-technical founder (Zero) to run a complete business operation through intelligent agents that research opportunities, create content, build digital products, and manage day-to-day operations.
+Frasier is a fully autonomous AI organization system consisting of 7 specialized AI agents that operate 24/7 with minimal founder oversight. The system enables a non-technical founder (Zero) to run a complete business operation through intelligent agents that research opportunities, create content, build digital products, and manage day-to-day operations.
 
 **Core Value Proposition:**
 - **Autonomous Operation:** Agents work independently, make decisions, and execute tasks without constant supervision
@@ -397,7 +397,7 @@ Three governance models:
 ### Communication Layer
 
 **Discord**
-- **Server:** Dedicated server for VoxYZ Agent World
+- **Server:** Dedicated server for Frasier
 - **Channels:**
   - `#executive` - Founder posts mission directives
   - `#team-chat` - Agent discussions (future)
@@ -1565,7 +1565,7 @@ Founder is non-technical but needs to run commands on VPS. Initial instructions 
 
 ### Primary Inspiration
 
-**VoxYZ Agent World Tweets:**
+**Frasier Tweets:**
 1. https://x.com/Voxyz_ai/status/2021161762062499912 - System overview
 2. https://x.com/Voxyz_ai/status/2021162781479727550 - Agent interactions
 3. https://x.com/Voxyz_ai/status/2021162749598835199 - Memory and learning

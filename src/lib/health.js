@@ -111,8 +111,8 @@ async function checkOpenRouter() {
     const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://voxyz.ai',
-        'X-Title': 'VoxYZ Agent World'
+        'HTTP-Referer': 'https://frasier.ai',
+        'X-Title': 'Frasier'
       }
     });
 

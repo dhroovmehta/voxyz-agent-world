@@ -15,7 +15,7 @@ const models = require('../src/lib/models');
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('VoxYZ — End-to-End Pipeline Test');
+  console.log('Frasier — End-to-End Pipeline Test');
   console.log('='.repeat(60) + '\n');
 
   // Step 1: Verify agents exist

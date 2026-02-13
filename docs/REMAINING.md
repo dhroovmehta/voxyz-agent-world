@@ -1,4 +1,4 @@
-# VoxYZ Agent World — Remaining Features
+# Frasier — Remaining Features
 
 > Last updated: Feb 11, 2026
 > Priority: ranked by impact on "agents feel alive" goal

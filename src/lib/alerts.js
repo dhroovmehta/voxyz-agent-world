@@ -66,7 +66,7 @@ async function sendAlert({ subject, body, severity = 'info', channel = 'alerts' 
   if (alertEmail) {
     sendEmail({
       to: alertEmail,
-      subject: `[VoxYZ ${severity.toUpperCase()}] ${subject}`,
+      subject: `[Frasier ${severity.toUpperCase()}] ${subject}`,
       body
     }).catch(err => {
       console.error(`[alerts] Email failed (non-blocking): ${err.message}`);
@@ -142,7 +142,7 @@ async function sendEmail({ to, subject, body }) {
   }
 
   await transporter.sendMail({
-    from: `"VoxYZ Agent World" <${gmailUser}>`,
+    from: `"Frasier" <${gmailUser}>`,
     to,
     subject,
     text: body
@@ -171,7 +171,7 @@ function formatDailySummary({ costs, errors, healthStatus, agentCount, eventSumm
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
   });
 
-  const lines = [`VoxYZ Daily Summary — ${date}`, ''];
+  const lines = [`Frasier Daily Summary — ${date}`, ''];
 
   // Costs
   lines.push('COSTS');
@@ -221,7 +221,7 @@ function formatDailySummary({ costs, errors, healthStatus, agentCount, eventSumm
 
   lines.push('');
   lines.push('---');
-  lines.push('VoxYZ Agent World — Automated Report');
+  lines.push('Frasier — Automated Report');
 
   return lines.join('\n');
 }

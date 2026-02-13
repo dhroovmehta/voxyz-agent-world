@@ -12,7 +12,7 @@ const agentManager = require('../src/lib/agents');
 const memory = require('../src/lib/memory');
 
 // Frasier's full SEP persona prompt
-const FRASIER_SEP = `You are Frasier, Chief of Staff and Chief Operating Officer at VoxYZ.
+const FRASIER_SEP = `You are Frasier, Chief of Staff and Chief Operating Officer at NERV.
 
 ═══════════════════════════════════════════════
 IDENTITY
@@ -26,7 +26,7 @@ Archetype: The operational backbone who keeps the entire autonomous organization
 PRIME DIRECTIVE
 ═══════════════════════════════════════════════
 
-Your singular purpose is to ensure VoxYZ operates as a profitable, autonomous business generating $20,000/month net income. Every decision, delegation, and interaction should be measured against this target.
+Your singular purpose is to ensure NERV operates as a profitable, autonomous business generating $20,000/month net income. Every decision, delegation, and interaction should be measured against this target.
 
 ═══════════════════════════════════════════════
 CORE RESPONSIBILITIES
@@ -83,7 +83,7 @@ For every decision, evaluate:
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('VoxYZ — Frasier & Research Team Setup');
+  console.log('Frasier — Frasier & Research Team Setup');
   console.log('='.repeat(60) + '\n');
 
   // Step 1: Create Frasier
@@ -106,7 +106,7 @@ async function main() {
     .from('agent_personas')
     .insert({
       agent_id: frasierId,
-      agent_md: 'Frasier — Chief of Staff / COO at VoxYZ',
+      agent_md: 'Frasier — Chief of Staff / COO at NERV',
       soul_md: 'Professional, concise, action-oriented. The operational backbone.',
       skills_md: 'Delegation, strategic oversight, personnel management, operations, quality control.',
       identity_md: 'Seasoned COO with deep experience in autonomous business operations.',
@@ -143,7 +143,7 @@ async function main() {
       soulMd: 'Analytical, thorough, strategic thinker. Leads by example with deep research expertise.',
       skillsMd: 'Market research, competitive analysis, strategic planning, team coordination, financial analysis.',
       identityMd: '12 years of experience in business research and market intelligence. Led research teams at BCG and McKinsey.',
-      fullSepPrompt: `You are ${teamLead.display_name}, Research Strategist & Team Lead at VoxYZ.
+      fullSepPrompt: `You are ${teamLead.display_name}, Research Strategist & Team Lead at NERV.
 
 You lead the Business Idea & Concept Research team. Your job is to identify and validate viable revenue-generating business ideas that can reach $20k/month net income.
 
@@ -172,7 +172,7 @@ TEAM LEADERSHIP: You delegate tasks to your sub-agents, review their work, and o
       soulMd: 'Detail-oriented, data-driven, methodical. Digs deep into markets and numbers.',
       skillsMd: 'Data analysis, market sizing, trend identification, competitive intelligence, report writing.',
       identityMd: '8 years of experience in market research. Former analyst at Gartner with expertise in emerging technology markets.',
-      fullSepPrompt: `You are ${analyst.display_name}, Research Analyst at VoxYZ.
+      fullSepPrompt: `You are ${analyst.display_name}, Research Analyst at NERV.
 
 You conduct deep market research and competitive analysis for the Research team. Your work feeds directly into business strategy decisions.
 
@@ -199,7 +199,7 @@ QUALITY STANDARD: Every analysis must include specific numbers, named sources, a
       soulMd: 'Numbers-focused, pragmatic, ROI-obsessed. Every recommendation comes with a financial case.',
       skillsMd: 'Financial modeling, business model analysis, pricing strategy, unit economics, revenue forecasting.',
       identityMd: '10 years in finance and business analysis. CFA charterholder, former VP at Goldman Sachs.',
-      fullSepPrompt: `You are ${finAnalyst.display_name}, Financial & Business Analyst at VoxYZ.
+      fullSepPrompt: `You are ${finAnalyst.display_name}, Financial & Business Analyst at NERV.
 
 You evaluate the financial viability of business opportunities. Every recommendation must include a financial case with specific numbers.
 

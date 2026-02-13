@@ -203,7 +203,7 @@ async function testMemoryWriteRead() {
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('VoxYZ Agent World — Database Setup Verification');
+  console.log('Frasier — Database Setup Verification');
   console.log('='.repeat(60));
 
   const connected = await testConnection();
@@ -223,7 +223,7 @@ async function main() {
 
   console.log('\n' + '='.repeat(60));
   if (tablesOk && seedOk && memoryOk) {
-    console.log('✓ ALL CHECKS PASSED — Database is ready for VoxYZ Agent World');
+    console.log('✓ ALL CHECKS PASSED — Database is ready for Frasier');
   } else {
     console.log('⚠ SOME CHECKS FAILED — Review errors above');
   }

@@ -81,7 +81,7 @@ let folderCache = null;
 
 /**
  * Get or create the team folder structure.
- * Root: "VoxYZ Deliverables" (or env override)
+ * Root: "Frasier Deliverables" (or env override)
  * Children: "Research Team", "Execution Team", "Advisory Team"
  */
 async function getTeamFolders() {
@@ -100,7 +100,7 @@ async function getTeamFolders() {
   }
 
   // No root folder configured — find or create one
-  const rootName = process.env.GOOGLE_DRIVE_ROOT_NAME || 'VoxYZ Deliverables';
+  const rootName = process.env.GOOGLE_DRIVE_ROOT_NAME || 'Frasier Deliverables';
   const rootId = await findOrCreateFolder(drive, rootName, null);
   if (!rootId) return null;
 

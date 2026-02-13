@@ -336,7 +336,7 @@ async function generatePersona(agent, hire) {
     .map(a => `${a.display_name} (${a.role})`)
     .join(', ') || 'none yet';
 
-  const prompt = `You are the Persona Architect for VoxYZ Agent World. Generate a complete Structured Enhancement Protocol (SEP) persona for a new AI agent.
+  const prompt = `You are the Persona Architect for Frasier. Generate a complete Structured Enhancement Protocol (SEP) persona for a new AI agent.
 
 AGENT DETAILS:
 - Name: ${agent.display_name}

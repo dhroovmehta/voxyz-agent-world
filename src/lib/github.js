@@ -34,7 +34,7 @@ async function githubRequest(method, path, body = null) {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/vnd.github.v3+json',
       'Content-Type': 'application/json',
-      'User-Agent': 'VoxYZ-Agent-World/1.0'
+      'User-Agent': 'Frasier/1.0'
     }
   };
 

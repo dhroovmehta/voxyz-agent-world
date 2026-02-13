@@ -1,4 +1,4 @@
-# VoxYZ Agent World — Completed Features
+# Frasier — Completed Features
 
 > Last updated: Feb 11, 2026
 

@@ -418,7 +418,7 @@ async function getAgentPersona(agentId) {
   // Fallback: construct a basic prompt from agent fields
   return {
     agent,
-    systemPrompt: `You are ${agent.display_name}, ${agent.title || agent.role} at VoxYZ.\n\nRole: ${agent.role}`,
+    systemPrompt: `You are ${agent.display_name}, ${agent.title || agent.role} at NERV.\n\nRole: ${agent.role}`,
     persona: null
   };
 }

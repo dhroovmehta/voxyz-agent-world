@@ -240,8 +240,8 @@ async function makeAPICall(modelConfig, systemPrompt, userMessage) {
 
   // OpenRouter requires HTTP-Referer and X-Title
   if (endpoint.includes('openrouter.ai')) {
-    headers['HTTP-Referer'] = 'https://voxyz.ai';
-    headers['X-Title'] = 'VoxYZ Agent World';
+    headers['HTTP-Referer'] = 'https://frasier.ai';
+    headers['X-Title'] = 'Frasier';
   }
 
   const body = {

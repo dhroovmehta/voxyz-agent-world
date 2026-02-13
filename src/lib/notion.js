@@ -1,6 +1,6 @@
 // notion.js — Publish deliverables and summaries to Notion
 // WHY: Discord is for alerts only. Notion is where deliverables live.
-// Each team has a page in the VoxYZ HQ workspace.
+// Each team has a page in the Frasier HQ workspace.
 // Deliverables are created as child pages under the team's page.
 
 const supabase = require('./supabase');

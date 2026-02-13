@@ -13,7 +13,7 @@ const checks = {
   NOTION_API_KEY: process.env.NOTION_API_KEY?.startsWith('ntn_'),
 };
 
-console.log('\n=== VoxYZ Environment Check ===\n');
+console.log('\n=== Frasier Environment Check ===\n');
 let allGood = true;
 for (const [key, ok] of Object.entries(checks)) {
   const status = ok ? 'OK' : 'MISSING/INVALID';

@@ -37,7 +37,7 @@ async function setup() {
       soul_md: 'Meticulous, detail-oriented, never forgets.',
       skills_md: 'Testing, QA, memory verification.',
       identity_md: '5 years of QA experience.',
-      full_sep_prompt: 'You are Rei, a QA Specialist at VoxYZ. You are meticulous and detail-oriented. You test memory systems to ensure they never fail.'
+      full_sep_prompt: 'You are Rei, a QA Specialist at NERV. You are meticulous and detail-oriented. You test memory systems to ensure they never fail.'
     })
     .select()
     .single();
@@ -209,7 +209,7 @@ async function cleanup() {
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('VoxYZ — Memory System Persistence Test');
+  console.log('Frasier — Memory System Persistence Test');
   console.log('Simulates 3 days of agent activity, verifies recall.');
   console.log('='.repeat(60) + '\n');
 

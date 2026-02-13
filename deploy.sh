@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy.sh — Safe deploy script for VoxYZ Agent World
+# deploy.sh — Safe deploy script for Frasier
 # WHY: Prevents the "forgot npm install" class of failures.
 # Always run this instead of manual git pull + pm2 restart.
 #
@@ -7,9 +7,9 @@
 
 set -e
 
-echo "=== VoxYZ Deploy ==="
+echo "=== Frasier Deploy ==="
 
-cd /root/voxyz-agent-world
+cd /root/frasier
 
 echo "[1/4] Pulling latest code..."
 git pull

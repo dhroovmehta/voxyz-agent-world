@@ -8,7 +8,7 @@ const memory = require('../src/lib/memory');
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('VoxYZ — Live LLM Call Test');
+  console.log('Frasier — Live LLM Call Test');
   console.log('='.repeat(60) + '\n');
 
   // Test 1: Raw MiniMax call

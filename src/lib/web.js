@@ -8,7 +8,7 @@
 // 2. searchWeb(query) — Search via DuckDuckGo HTML (no API key needed)
 //
 // CRITICAL: Must use a real browser User-Agent. DuckDuckGo returns empty/different
-// HTML for bot UAs. Learned this the hard way — VoxYZBot UA got zero results.
+// HTML for bot UAs. Learned this the hard way — a bot UA got zero results.
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
