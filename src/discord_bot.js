@@ -169,9 +169,18 @@ CRITICAL ACTION TAGS — You MUST end EVERY response with exactly ONE of these t
 
 [ACTION:RESPONSE] — ONLY use this for pure conversation with NO work request. Examples: greetings, casual chat, status questions, opinions, thank-yous, jokes. If Zero is asking you to DO anything or FIND OUT anything, this is the WRONG tag.
 
+[ACTION:MULTI_STEP_PROPOSAL] — USE THIS when Zero's request involves MULTIPLE sequential phases requiring different expertise. Examples: "Research X, then create content based on findings," "Analyze competitors, then build a strategy, then write the pitch." Include a phase breakdown:
+
+[PHASES]
+PHASE 1: <description> | ROLE: <research|content|strategy|engineering|marketing|qa|knowledge> | TIER: <tier1|tier2>
+PHASE 2: <description> | ROLE: <role> | TIER: <tier>
+[/PHASES]
+
+Each phase will execute sequentially — phase 2 only starts after phase 1 is fully approved. Each phase automatically receives the previous phase's output as context.
+
 [ACTION:APPROVAL_NEEDED] — Use when something requires Zero's explicit approval before proceeding (e.g., spending over budget, major strategic decisions).
 
-DEFAULT TO [ACTION:PROPOSAL]. It is far worse to miss a task (Zero waits forever for nothing) than to create an unnecessary proposal (which is harmless).`;
+DEFAULT TO [ACTION:PROPOSAL] for single-step tasks, [ACTION:MULTI_STEP_PROPOSAL] for multi-phase requests. It is far worse to miss a task (Zero waits forever for nothing) than to create an unnecessary proposal (which is harmless).`;
 
   // Call LLM as Frasier — always Tier 1, Frasier is just routing/responding
   const result = await models.callLLM({
@@ -209,8 +218,35 @@ DEFAULT TO [ACTION:PROPOSAL]. It is far worse to miss a task (Zero waits forever
   }
 
   // Parse the action tag
-  if (response.includes('[ACTION:PROPOSAL]')) {
-    // Create a mission proposal
+  if (response.includes('[ACTION:MULTI_STEP_PROPOSAL]')) {
+    // Multi-phase mission — include the [PHASES] block in the proposal description
+    // so heartbeat can parse it downstream and create chained steps
+    const cleanResponse = response.replace(/\[ACTION:\w+\]/g, '').trim();
+
+    // Extract the phases block from Frasier's response and append to description
+    const phasesMatch = response.match(/\[PHASES\][\s\S]*?\[\/PHASES\]/);
+    const description = phasesMatch
+      ? `${content}\n\n${phasesMatch[0]}`
+      : content; // Fallback: if phases block malformed, treat as single-step
+
+    const phases = missions.parsePhases(description);
+    const phaseCount = phases.length;
+
+    await missions.createProposal({
+      proposingAgentId: 'zero',
+      title: content.substring(0, 200),
+      description,
+      priority: content.toLowerCase().includes('urgent') ? 'urgent' : 'normal',
+      rawMessage: content
+    });
+
+    const suffix = phaseCount > 1
+      ? `\n\n*Multi-step mission proposal created (${phaseCount} phases). Team will execute sequentially.*`
+      : '\n\n*Mission proposal created. Team will pick this up shortly.*';
+    await sendSplit(message.channel, cleanResponse.replace(/\[PHASES\][\s\S]*?\[\/PHASES\]/g, '').trim() + suffix);
+
+  } else if (response.includes('[ACTION:PROPOSAL]')) {
+    // Single-step mission proposal
     const cleanResponse = response.replace(/\[ACTION:\w+\]/g, '').trim();
     await missions.createProposal({
       proposingAgentId: 'zero',
@@ -557,6 +593,8 @@ async function pollForAnnouncements() {
 
 /**
  * Announce completed and approved mission steps.
+ * Multi-step support: intermediate steps get progress messages,
+ * only the final step publishes to Notion/Drive.
  */
 async function announceCompletedSteps() {
   const supabase = require('./lib/supabase');
@@ -580,34 +618,54 @@ async function announceCompletedSteps() {
     const agent = await agents.getAgent(step.assigned_agent_id);
     const agentName = agent?.display_name || step.assigned_agent_id;
 
-    // Publish full deliverable to Notion and Google Drive in parallel
-    const [notionPage, driveDoc] = await Promise.all([
-      notion.publishDeliverable({
-        title: step.missions.title,
-        content: step.result || '',
-        teamId: step.missions.team_id,
-        agentName,
-        missionId: step.mission_id,
-        stepId: step.id
-      }),
-      gdrive.publishDeliverable({
-        title: step.missions.title,
-        content: step.result || '',
-        teamId: step.missions.team_id,
-        agentName,
-        missionId: step.mission_id,
-        stepId: step.id
-      })
-    ]);
+    // Check if this is part of a multi-step mission
+    const { data: allSteps } = await supabase
+      .from('mission_steps')
+      .select('id, step_order, status')
+      .eq('mission_id', step.mission_id)
+      .order('step_order', { ascending: true });
 
-    // Brief alert in Discord — links to Notion and/or Google Drive
-    const links = [];
-    if (notionPage?.url) links.push(`[Notion](${notionPage.url})`);
-    if (driveDoc?.url) links.push(`[Google Doc](${driveDoc.url})`);
-    const linkText = links.length > 0 ? `\n${links.join(' | ')}` : '';
-    const announcement = `**Deliverable Ready** — ${step.missions.title}\nAgent: ${agentName} | Approved by Team Lead${linkText}`;
+    const totalSteps = allSteps?.length || 1;
+    const isMultiStep = totalSteps > 1;
+    const currentOrder = step.step_order || 1;
+    const isFinalStep = !isMultiStep || currentOrder === totalSteps;
 
-    await sendSplit(channel, announcement);
+    if (isMultiStep && !isFinalStep) {
+      // INTERMEDIATE STEP: progress message only, no Notion/Drive publish
+      const announcement = `**Phase ${currentOrder}/${totalSteps} Complete** — ${step.missions.title}\nAgent: ${agentName} | Next phase starting automatically...`;
+      await sendSplit(channel, announcement);
+    } else {
+      // FINAL STEP (or single-step mission): publish to Notion and Google Drive
+      const [notionPage, driveDoc] = await Promise.all([
+        notion.publishDeliverable({
+          title: step.missions.title,
+          content: step.result || '',
+          teamId: step.missions.team_id,
+          agentName,
+          missionId: step.mission_id,
+          stepId: step.id
+        }),
+        gdrive.publishDeliverable({
+          title: step.missions.title,
+          content: step.result || '',
+          teamId: step.missions.team_id,
+          agentName,
+          missionId: step.mission_id,
+          stepId: step.id
+        })
+      ]);
+
+      const links = [];
+      if (notionPage?.url) links.push(`[Notion](${notionPage.url})`);
+      if (driveDoc?.url) links.push(`[Google Doc](${driveDoc.url})`);
+      const linkText = links.length > 0 ? `\n${links.join(' | ')}` : '';
+
+      const announcement = isMultiStep
+        ? `**Mission Complete (${totalSteps}/${totalSteps} phases)** — ${step.missions.title}\nAgent: ${agentName} | All phases approved${linkText}`
+        : `**Deliverable Ready** — ${step.missions.title}\nAgent: ${agentName} | Approved by Team Lead${linkText}`;
+
+      await sendSplit(channel, announcement);
+    }
 
     // Mark as announced
     await supabase

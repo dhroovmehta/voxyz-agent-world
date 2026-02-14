@@ -84,10 +84,22 @@ async function processNextStep() {
     // not the URL string. Twitter/X URLs get rewritten to fxtwitter for access.
     const { enrichedText } = await web.prefetchUrls(step.description);
 
+    // CHAIN CONTEXT: If this step has a parent, inject the parent's result
+    // so the agent builds on the previous phase's output.
+    let userMessage = enrichedText;
+    if (step.parent_step_id) {
+      const parentData = await missions.getParentStepResult(step.parent_step_id);
+      if (parentData) {
+        const truncatedResult = parentData.result.substring(0, 6000);
+        userMessage = `## PREVIOUS PHASE OUTPUT (from ${parentData.agentName})\nThe following is the completed output from the previous phase. Use it as foundation:\n---\n${truncatedResult}\n---\n\n${enrichedText}`;
+        console.log(`[worker] Step #${step.id}: Injected parent step #${step.parent_step_id} context (${truncatedResult.length} chars)`);
+      }
+    }
+
     // Call the LLM — always respect the step's assigned tier
     const result = await models.callLLM({
       systemPrompt: promptData.systemPrompt,
-      userMessage: enrichedText,
+      userMessage,
       agentId: step.assigned_agent_id,
       missionStepId: step.id,
       forceTier: step.model_tier

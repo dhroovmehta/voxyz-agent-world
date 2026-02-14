@@ -295,6 +295,8 @@ async function createStep({
 /**
  * Get pending steps ready for the worker to pick up.
  * Only returns steps assigned to active agents.
+ * Multi-step blocking: steps with step_order > 1 are only eligible
+ * if ALL prior steps in the same mission have status = 'completed'.
  */
 async function getPendingSteps(limit = 5) {
   const { data, error } = await supabase
@@ -305,13 +307,33 @@ async function getPendingSteps(limit = 5) {
     .eq('missions.status', 'in_progress')
     .order('step_order', { ascending: true })
     .order('created_at', { ascending: true })
-    .limit(limit);
+    .limit(limit * 2); // Fetch extra since some may be blocked
 
   if (error) {
     console.error('[missions] Failed to get pending steps:', error.message);
     return [];
   }
-  return data || [];
+
+  if (!data || data.length === 0) return [];
+
+  // Post-fetch blocking check for chained steps
+  const eligible = [];
+  for (const step of data) {
+    // step_order <= 1 always eligible (backwards compatible with existing single-step missions)
+    if (!step.step_order || step.step_order <= 1) {
+      eligible.push(step);
+    } else {
+      // Chained step — only eligible if all predecessors are completed
+      const ready = await isPreviousStepComplete(step.mission_id, step.step_order);
+      if (ready) {
+        eligible.push(step);
+      }
+    }
+
+    if (eligible.length >= limit) break;
+  }
+
+  return eligible;
 }
 
 /**
@@ -568,6 +590,81 @@ function canTeamHandle(teamAgents, roleCategory) {
 }
 
 // ============================================================
+// MULTI-STEP MISSION HELPERS
+// ============================================================
+
+/**
+ * Parse a [PHASES] block from mission description text.
+ * Returns array of { description, role, tier } or empty array if no phases found.
+ * Shared by discord_bot.js (when creating proposals) and heartbeat.js (when creating steps).
+ * Graceful fallback: malformed input → empty array → single-step behavior.
+ */
+function parsePhases(text) {
+  if (!text) return [];
+  const match = text.match(/\[PHASES\]([\s\S]*?)\[\/PHASES\]/);
+  if (!match) return [];
+  return match[1].trim().split('\n').filter(l => l.trim()).map(line => {
+    const m = line.match(/PHASE \d+:\s*(.+?)\s*\|\s*ROLE:\s*(\w+)\s*\|\s*TIER:\s*(\w+)/i);
+    return m ? { description: m[1].trim(), role: m[2].trim().toLowerCase(), tier: m[3].trim().toLowerCase() } : null;
+  }).filter(Boolean);
+}
+
+/**
+ * Check if all previous steps in a mission are completed.
+ * Used by getPendingSteps() to block chained steps until predecessors finish.
+ *
+ * @param {number} missionId - The mission ID
+ * @param {number} currentStepOrder - The step_order of the step we're checking
+ * @returns {boolean} true if all prior steps are completed (or no prior steps exist)
+ */
+async function isPreviousStepComplete(missionId, currentStepOrder) {
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .select('status')
+    .eq('mission_id', missionId)
+    .lt('step_order', currentStepOrder)
+    .neq('status', 'completed');
+
+  if (error) {
+    console.error(`[missions] Error checking previous steps for mission #${missionId}:`, error.message);
+    return false; // Block step on error — safer than running out of order
+  }
+
+  // If no rows returned, all predecessors are completed (or none exist)
+  return !data || data.length === 0;
+}
+
+/**
+ * Get the result from a parent step (for context injection in chained missions).
+ *
+ * @param {number} parentStepId - The parent_step_id to fetch
+ * @returns {{ result: string, agentName: string } | null}
+ */
+async function getParentStepResult(parentStepId) {
+  if (!parentStepId) return null;
+
+  const { data, error } = await supabase
+    .from('mission_steps')
+    .select('result, assigned_agent_id')
+    .eq('id', parentStepId)
+    .single();
+
+  if (error || !data || !data.result) return null;
+
+  // Get agent display name for context header
+  const { data: agent } = await supabase
+    .from('agents')
+    .select('display_name')
+    .eq('id', data.assigned_agent_id)
+    .single();
+
+  return {
+    result: data.result,
+    agentName: agent?.display_name || data.assigned_agent_id
+  };
+}
+
+// ============================================================
 // SMART ROUTING (keyword-based agent assignment)
 // ============================================================
 
@@ -656,6 +753,10 @@ module.exports = {
   routeByKeywords,
   canTeamHandle,
   checkMissionCompletion,
+  // Multi-step mission chains
+  parsePhases,
+  isPreviousStepComplete,
+  getParentStepResult,
   EXPERTISE_MAP,
   ROLE_TITLES,
   ROLE_KEYWORDS

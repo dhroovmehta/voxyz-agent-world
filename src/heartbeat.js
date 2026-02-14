@@ -164,42 +164,102 @@ async function processProposals() {
       const mission = await missions.acceptProposal(proposal.id, teamId);
       if (!mission) continue;
 
-      const assignee = matchedAgent || teamAgents[0];
+      // Check for multi-phase request: [PHASES] block in description
+      const phases = missions.parsePhases(taskDescription);
 
-      // Determine model tier
-      const isComplex = proposal.priority === 'urgent';
-      const modelTier = isComplex ? 'tier2' : 'tier1';
+      if (phases.length > 1) {
+        // MULTI-STEP MISSION: create one step per phase, chained sequentially
+        console.log(`[heartbeat] Multi-step mission #${mission.id}: ${phases.length} phases detected`);
 
-      // Create the step
-      await missions.createStep({
-        missionId: mission.id,
-        description: taskDescription,
-        assignedAgentId: assignee.id,
-        modelTier,
-        stepOrder: 1
-      });
+        let previousStepId = null;
+        const stepAgents = [];
 
-      await events.logEvent({
-        eventType: 'mission_created',
-        agentId: assignee.id,
-        teamId,
-        severity: 'info',
-        description: `Mission #${mission.id}: "${proposal.title}" assigned to ${assignee.display_name}`,
-        data: { missionId: mission.id, proposalId: proposal.id }
-      });
+        for (let i = 0; i < phases.length; i++) {
+          const phase = phases[i];
 
-      // Sync to Notion task board (non-blocking — don't fail the mission if Notion is down)
-      notion.createTask({
-        teamId,
-        title: proposal.title || taskDescription.substring(0, 200),
-        assignee: assignee.display_name,
-        status: 'In Progress',
-        priority: proposal.priority === 'urgent' ? 'Urgent' : 'Normal',
-        missionId: mission.id,
-        description: taskDescription
-      }).catch(err => console.error(`[heartbeat] Notion task sync failed: ${err.message}`));
+          // Route each phase to the best-fit agent by its ROLE tag
+          const { matchedAgent: phaseAgent } = missions.canTeamHandle(teamAgents, phase.role);
+          const assignee = phaseAgent || matchedAgent || teamAgents[0];
 
-      console.log(`[heartbeat] Mission #${mission.id} created, assigned to ${assignee.display_name} (${modelTier})`);
+          // Map tier tag to model tier
+          const phaseTier = phase.tier === 'tier2' ? 'tier2' : 'tier1';
+
+          const step = await missions.createStep({
+            missionId: mission.id,
+            description: phase.description,
+            assignedAgentId: assignee.id,
+            modelTier: phaseTier,
+            stepOrder: i + 1,
+            parentStepId: previousStepId
+          });
+
+          if (step) {
+            previousStepId = step.id;
+            stepAgents.push(assignee.display_name);
+          }
+        }
+
+        await events.logEvent({
+          eventType: 'mission_created',
+          agentId: stepAgents[0] || 'unknown',
+          teamId,
+          severity: 'info',
+          description: `Multi-step Mission #${mission.id}: "${proposal.title}" — ${phases.length} phases → ${stepAgents.join(' → ')}`,
+          data: { missionId: mission.id, proposalId: proposal.id, phaseCount: phases.length }
+        });
+
+        // Sync to Notion
+        notion.createTask({
+          teamId,
+          title: proposal.title || taskDescription.substring(0, 200),
+          assignee: stepAgents.join(' → '),
+          status: 'In Progress',
+          priority: proposal.priority === 'urgent' ? 'Urgent' : 'Normal',
+          missionId: mission.id,
+          description: `Multi-step (${phases.length} phases): ${taskDescription.substring(0, 500)}`
+        }).catch(err => console.error(`[heartbeat] Notion task sync failed: ${err.message}`));
+
+        console.log(`[heartbeat] Mission #${mission.id} created with ${phases.length} phases: ${stepAgents.join(' → ')}`);
+
+      } else {
+        // SINGLE-STEP MISSION: existing behavior, unchanged
+        const assignee = matchedAgent || teamAgents[0];
+
+        // Determine model tier
+        const isComplex = proposal.priority === 'urgent';
+        const modelTier = isComplex ? 'tier2' : 'tier1';
+
+        // Create the step
+        await missions.createStep({
+          missionId: mission.id,
+          description: taskDescription,
+          assignedAgentId: assignee.id,
+          modelTier,
+          stepOrder: 1
+        });
+
+        await events.logEvent({
+          eventType: 'mission_created',
+          agentId: assignee.id,
+          teamId,
+          severity: 'info',
+          description: `Mission #${mission.id}: "${proposal.title}" assigned to ${assignee.display_name}`,
+          data: { missionId: mission.id, proposalId: proposal.id }
+        });
+
+        // Sync to Notion task board (non-blocking — don't fail the mission if Notion is down)
+        notion.createTask({
+          teamId,
+          title: proposal.title || taskDescription.substring(0, 200),
+          assignee: assignee.display_name,
+          status: 'In Progress',
+          priority: proposal.priority === 'urgent' ? 'Urgent' : 'Normal',
+          missionId: mission.id,
+          description: taskDescription
+        }).catch(err => console.error(`[heartbeat] Notion task sync failed: ${err.message}`));
+
+        console.log(`[heartbeat] Mission #${mission.id} created, assigned to ${assignee.display_name} (${modelTier})`);
+      }
 
     } catch (err) {
       console.error(`[heartbeat] Error processing proposal #${proposal.id}:`, err.message);
