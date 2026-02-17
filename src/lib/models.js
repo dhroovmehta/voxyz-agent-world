@@ -181,6 +181,40 @@ async function callLLM({
       };
     }
 
+    // If Tier 2 fails (not credit exhaustion), fall back to Tier 1
+    if (tier === 'tier2' && !forceTier) {
+      console.log(`[models] Tier 2 (${modelConfig.name}) failed: ${err.message}. Falling back to tier1...`);
+      try {
+        const fallbackConfig = MODELS['tier1'];
+        const fallbackResult = await makeAPICall(fallbackConfig, systemPrompt, userMessage);
+        const fallbackTime = Date.now() - startTime;
+
+        await logModelUsage({
+          agentId,
+          missionStepId,
+          modelName: fallbackConfig.name,
+          modelTier: 'tier1',
+          inputTokens: fallbackResult.usage?.prompt_tokens || 0,
+          outputTokens: fallbackResult.usage?.completion_tokens || 0,
+          estimatedCost: estimateCost(fallbackConfig, fallbackResult.usage),
+          responseTimeMs: fallbackTime,
+          success: true,
+          errorMessage: null,
+          metadata: { fallbackFrom: 'tier2' }
+        });
+
+        return {
+          content: fallbackResult.content,
+          model: fallbackConfig.name,
+          tier: 'tier1',
+          usage: fallbackResult.usage,
+          error: null
+        };
+      } catch (fallbackErr) {
+        console.error(`[models] Tier 1 fallback also failed: ${fallbackErr.message}`);
+      }
+    }
+
     console.error(`[models] ${modelConfig.name} failed: ${err.message}`);
     return {
       content: null,

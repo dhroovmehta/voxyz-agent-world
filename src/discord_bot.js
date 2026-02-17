@@ -696,13 +696,22 @@ async function announceCompletedSteps() {
     .eq('announced', false)
     .limit(5);
 
-  if (error || !steps || steps.length === 0) return;
+  if (error) {
+    console.error('[discord] announceCompletedSteps query error:', error.message || error);
+    return;
+  }
+  if (!steps || steps.length === 0) return;
+
+  console.log(`[discord] Found ${steps.length} completed steps to announce`);
 
   for (const step of steps) {
     // Determine which channel to post in
     const channelName = getTeamChannel(step.missions.team_id);
     const channel = channels[channelName] || channels['general'];
-    if (!channel) continue;
+    if (!channel) {
+      console.warn(`[discord] No channel found for team ${step.missions.team_id} (tried: ${channelName}, general). Skipping step #${step.id}`);
+      continue;
+    }
 
     // Build announcement
     const agent = await agents.getAgent(step.assigned_agent_id);
