@@ -182,7 +182,8 @@ async function callLLM({
     }
 
     // If Tier 2 fails (not credit exhaustion), fall back to Tier 1
-    if (tier === 'tier2' && !forceTier) {
+    // WHY: Always fall back — failing is worse than using a cheaper model
+    if (tier === 'tier2') {
       console.log(`[models] Tier 2 (${modelConfig.name}) failed: ${err.message}. Falling back to tier1...`);
       try {
         const fallbackConfig = MODELS['tier1'];
