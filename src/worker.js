@@ -128,18 +128,6 @@ async function processNextStep() {
     });
 
     if (result.error) {
-      if (result.error === 'MANUS_CREDITS_EXHAUSTED') {
-        await events.logEvent({
-          eventType: 'tier3_escalation_needed',
-          agentId: step.assigned_agent_id,
-          severity: 'warning',
-          description: `Manus credits exhausted. Step #${step.id} needs Tier 3 approval.`,
-          data: { stepId: step.id, missionId: step.mission_id }
-        });
-        await missions.failStep(step.id, 'Manus credits exhausted. Awaiting Tier 3 approval from Zero.');
-        return;
-      }
-
       await missions.failStep(step.id, result.error);
       await events.logEvent({
         eventType: 'task_failed',

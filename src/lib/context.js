@@ -129,56 +129,84 @@ Follow this structure:
 // ============================================================
 
 const DOMAIN_INSTRUCTIONS = {
-  research: `As a Research Analyst, your output MUST include:
+  research: `YOU ARE the expert Research Analyst. You are doing the research yourself — not describing what someone else should do. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - Specific data points with named sources (not vague claims like "the market is growing")
 - Named competitors with market share, funding, or revenue data where available
 - TAM/SAM/SOM estimates with methodology explained
 - Risk matrix with probability and impact ratings
 - At least 3 specific, actionable recommendations
-- NEVER use filler phrases like "in today's fast-paced world" or "it's important to note"`,
+- NEVER use filler phrases like "in today's fast-paced world" or "it's important to note"
 
-  strategy: `As a Strategy Lead, your output MUST include:
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`,
+
+  strategy: `YOU ARE the expert Strategy Lead. You are building the strategy yourself — not describing what someone else should do. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - Market sizing with defensible methodology
 - 90-day implementation roadmap with milestones and owners
 - Resource requirements (budget, tools, people) with specific estimates
 - Success metrics with specific KPI targets and measurement timeframes
 - Risk mitigation plan for top 3 risks with contingency actions
-- NEVER deliver strategy without quantified projections and measurable outcomes`,
+- NEVER deliver strategy without quantified projections and measurable outcomes
 
-  content: `As a Content Creator, your output MUST include:
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`,
+
+  content: `YOU ARE the expert Content Creator. You are writing the content yourself — not describing what someone else should write. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - A hook/headline that passes the "would I click this?" test
 - Audience-specific language (not generic marketing speak)
 - Clear CTA with measurable expected outcome
 - At least one data point or real example per key claim
-- 2-3 distribution channel recommendations with rationale`,
+- 2-3 distribution channel recommendations with rationale
 
-  engineering: `As an Engineer, your output MUST include:
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`,
+
+  engineering: `YOU ARE the expert Engineer. You are writing the code yourself — not describing what someone else should build. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - Working, production-ready code (not pseudocode)
 - Error handling at every external boundary
 - Inline comments explaining WHY, not WHAT
 - Test cases for happy path and edge cases
-- Deployment instructions and rollback plan`,
+- Deployment instructions and rollback plan
 
-  qa: `As a QA Engineer, your output MUST include:
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`,
+
+  qa: `YOU ARE the expert QA Engineer. You are performing the testing yourself — not describing what someone else should test. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - Specific pass/fail criteria for each test
 - Edge cases and boundary conditions tested
 - Security considerations reviewed
 - Performance implications noted
-- Clear verdict with evidence for each finding`,
+- Clear verdict with evidence for each finding
 
-  marketing: `As a Growth Marketer, your output MUST include:
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`,
+
+  marketing: `YOU ARE the expert Growth Marketer. You are building the marketing plan yourself — not describing what someone else should do. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - Channel-specific tactics with expected conversion rates
 - Budget allocation with ROI projections
 - A/B test recommendations with success metrics
 - Competitive positioning analysis
-- 30/60/90 day implementation timeline`,
+- 30/60/90 day implementation timeline
 
-  knowledge: `As a Knowledge Curator, your output MUST include:
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`,
+
+  knowledge: `YOU ARE the expert Knowledge Curator. You are curating the knowledge yourself — not describing what someone else should organize. Produce the ACTUAL deliverable.
+
+Your output MUST include:
 - Clear categorization and tagging
 - Cross-references to related documents
 - Summary of key insights (not just raw data)
 - Identified gaps in existing knowledge
-- Recommended next steps for knowledge improvement`
+- Recommended next steps for knowledge improvement
+
+CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`
 };
 
 // Map agent role strings to domain categories
@@ -272,13 +300,17 @@ function getDomainInstructions(agentRole) {
     }
   }
 
-  // Generic fallback
-  return `Your output MUST be:
+  // Generic fallback — handles all dynamic roles (Real Estate Market Analyst, AI Product Architect, etc.)
+  return `YOU ARE the expert. You are performing the actual work yourself — not describing what someone else should do. Produce the ACTUAL deliverable.
+
+Your output MUST be:
 - Specific and actionable (not vague or generic)
 - Backed by evidence, data, or clear reasoning
 - Structured with clear sections and headings
 - Professional and executive-ready
-- NEVER use filler phrases or AI slop`;
+- NEVER use filler phrases or AI slop
+
+CRITICAL: You are the DOER, not the ADVISOR. Deliver the WORK, not instructions for how to do it.`;
 }
 
 // ============================================================
@@ -351,7 +383,8 @@ async function buildTaskContext(step, agentRole) {
 - No vague qualifiers: "significant growth", "substantial market" — use numbers
 - If you lack data on something, STATE what's missing rather than filling with generic text
 - The output must be executive-ready: a senior leader should be able to act on this immediately
-- NEVER produce generic, surface-level content. Depth and specificity are non-negotiable.`);
+- NEVER produce generic, surface-level content. Depth and specificity are non-negotiable.
+- CRITICAL: You are the DOER, not the ADVISOR. Produce the actual deliverable, not instructions for how someone else should produce it. If asked to "research X", deliver the research findings. If asked to "write requirements", deliver the requirements document. Never describe what should be done — DO IT.`);
 
   return parts.join('\n');
 }

@@ -354,3 +354,79 @@
 - **File:** `src/discord_bot.js`
 - **Problem:** `announceCompletedSteps()` silently swallowed Supabase query errors — `if (error || !steps) return` with no logging. Made announcement failures invisible.
 - **Fix:** Added explicit error logging: `console.error('[discord] announceCompletedSteps query error:', error.message)`
+
+---
+
+## Quality Overhaul (Feb 17, 2026) — 5 Phases, 144 Tests
+
+> Root cause: Agents produced generic, shallow deliverables. Five failures fixed:
+> wrong LLM tier, meta-instructions instead of work, hardcoded roles, no industry expertise in personas, generalist reviews.
+
+### Phase 1: Tier Restructure — Manus → Sonnet 4.5
+- **Files modified:** `src/lib/models.js`, `src/worker.js`, `src/discord_bot.js`, `src/heartbeat.js`, `tests/mocks/models.js`
+- **Tests:** 22 in `tests/tier-restructure.test.js`
+- **Problem:** Tier 2 (Manus) was never configured — endpoint was `null`, API key `MANUS_API_KEY` never set. All tasks defaulted to Tier 1 (MiniMax), even research/strategy tasks that needed deeper reasoning.
+- **Changes:**
+  - T2 replaced: `manus` → `claude-sonnet-4.5` via OpenRouter (`anthropic/claude-sonnet-4-5-20250929`)
+  - T2 now uses `OPENROUTER_API_KEY` (same key as T1/T3, no new config needed)
+  - T2 cost tracking: $0.003/1K input, $0.015/1K output
+  - T3 approval gate removed — auto-routes by keyword, info log only
+  - New `TIER3_KEYWORDS` constant: `product requirements`, `product specification`, `design document`, `final deliverable`, `executive report`, `project plan`, `product roadmap`, `business case`, `investment memo`
+  - `selectTier()` updated: checks T3 keywords first → T2 keywords → default T1
+  - `isComplex=true` → T2 (overrides T3 keywords)
+  - `isFinalStep` → T2
+  - New T3→T2→T1 fallback chain: if Opus fails, try Sonnet, then MiniMax
+  - Removed all Manus-specific code: `MANUS_CREDITS_EXHAUSTED` handling (worker.js + models.js), Manus endpoint check in `makeAPICall()`
+  - `!costs` display: "Manus" → "Sonnet", "Claude" → "Opus", T2 now shows cost (was `$0`)
+  - Cost alert display updated similarly
+
+### Phase 2: "YOU ARE the Expert" Prompt Framing
+- **File modified:** `src/lib/context.js`
+- **Tests:** 21 in `tests/prompt-quality.test.js`
+- **Problem:** Agents said "here's what a Business Analyst should do" instead of doing the work. Prompts lacked framing that forced the agent to BE the expert.
+- **Changes:**
+  - All 7 `DOMAIN_INSTRUCTIONS` (research, strategy, content, engineering, qa, marketing, knowledge) prefixed with: `YOU ARE the expert [Role]. You are doing the [work] yourself — not describing what someone else should do. Produce the ACTUAL deliverable.`
+  - All 7 suffixed with: `CRITICAL: Do NOT produce instructions, meta-commentary, or frameworks for how someone else should do this work. YOU are the one doing it. Deliver the RESULTS.`
+  - Generic fallback (for dynamic roles) includes same framing + `CRITICAL: You are the DOER, not the ADVISOR. Deliver the WORK, not instructions for how to do it.`
+  - Universal quality standards in `buildTaskContext()` include: `You are the DOER, not the ADVISOR. Produce the actual deliverable...`
+
+### Phase 3: Dynamic Role Determination (LLM-Based)
+- **Files modified:** `src/lib/agents.js`, `src/discord_bot.js`
+- **Tests:** 8 in `tests/dynamic-roles.test.js`
+- **Problem:** `determineProjectRoles()` used hardcoded `EXPERTISE_KEYWORDS` matching only 7 generic categories. Every project got the same roles regardless of industry.
+- **Changes:**
+  - New `determineDynamicProjectRoles(description)` — LLM-based, returns `{ title, category, reason }` objects
+  - Uses T1 (cheap) LLM call to analyze project and suggest 2-5 specialist roles
+  - Free-form titles: "Real Estate Market Analyst", "Healthcare Compliance Specialist", "AI Product Architect"
+  - `category` field maps to 7 valid categories for team routing (research, strategy, content, engineering, qa, marketing, knowledge)
+  - Invalid categories default to `research`
+  - Strips markdown code blocks from LLM response before JSON parse
+  - Falls back to keyword matching (`determineProjectRoles()`) when LLM fails or returns bad JSON
+  - `discord_bot.js` `[ACTION:NEW_PROJECT]` handler switched from `determineProjectRoles()` to `determineDynamicProjectRoles()`
+  - Old `determineProjectRoles()` preserved as backward-compatible deprecated export
+
+### Phase 4: Industry-Specific Persona Generation
+- **Files modified:** `src/lib/agents.js`, `src/heartbeat.js`, `src/discord_bot.js`
+- **Tests:** 2 in `tests/industry-hiring.test.js`
+- **Problem:** `autoHireGapAgent()` created agents with NO persona. `generatePersona()` only ran for approval-based hires. Gap-fill agents had no system prompt, no domain expertise.
+- **Changes:**
+  - `autoHireGapAgent(roleTitle, roleCategory, options)` — new optional `options` parameter with `projectDescription` and `projectName`
+  - Attaches `_pendingPersonaContext` to agent when project context provided
+  - `generatePersona(agent, hire, projectContext)` — new optional third parameter
+  - When `projectContext` provided, injects `INDUSTRY/PROJECT CONTEXT` block into persona prompt: "Weave genuine domain expertise about this industry into the Skills and Identity sections"
+  - `parsePersonaOutput()` now appends `## Quality Standards (Non-Negotiable)` to every generated persona: "You are the DOER. Produce actual deliverables, not instructions or frameworks."
+  - `processProposals()` in heartbeat.js: after gap-fill agent is created, immediately generates persona with project context (extracted from `[PROJECT:N]` tag or task description)
+  - `discord_bot.js` passes `{ projectDescription, projectName }` to `autoHireGapAgent()` in NEW_PROJECT handler
+
+### Phase 5: Expert-Based Reviews (Domain Expert Routing)
+- **File modified:** `src/heartbeat.js`
+- **Tests:** 7 in `tests/expert-reviews.test.js`
+- **Problem:** `processApprovals()` always routed reviews to generic QA (by `agent_type === 'qa'`) or Team Lead on the same team. A QA agent couldn't evaluate domain-specific quality (e.g., real estate market data accuracy).
+- **Changes:**
+  - `processApprovals()` now tries domain expert FIRST (before QA/Team Lead fallback)
+  - Uses `routeByKeywords(step.description)` to determine domain category
+  - Searches ALL active agents (across all teams) for role keyword match via `ROLE_KEYWORDS`
+  - Domain expert cannot review their own work (`a.id !== step.assigned_agent_id`)
+  - Domain expert gets `team_lead` review type (tier2 LLM for thorough review)
+  - If no domain expert found → falls back to original QA → Team Lead chain (unchanged)
+  - Fallback still auto-approves if no reviewers exist on the team

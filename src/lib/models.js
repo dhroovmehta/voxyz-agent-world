@@ -1,9 +1,9 @@
-// models.js — Tiered LLM routing: MiniMax → Manus → Claude Opus 4.5
-// WHY tiered: MiniMax is cheapest for simple tasks, Manus handles complex reasoning,
-// Claude is emergency fallback only (expensive + rate limits).
+// models.js — Tiered LLM routing: MiniMax → Sonnet 4.5 → Claude Opus
+// WHY tiered: MiniMax is cheapest for simple tasks, Sonnet handles complex reasoning,
+// Opus handles PM/planning work (product requirements, design docs, etc.).
 //
 // Every call is logged to model_usage for cost tracking.
-// Tier 3 (Claude) requires explicit founder approval via Discord.
+// Fallback chain: T3→T2→T1 (always degrade gracefully, never fail silently).
 
 const supabase = require('./supabase');
 
@@ -23,14 +23,14 @@ const MODELS = {
     costPer1kOutput: 0.0016
   },
   tier2: {
-    name: 'manus',
+    name: 'claude-sonnet-4.5',
     tier: 'tier2',
-    endpoint: null, // Set when Manus API details provided
-    model: 'manus',
-    apiKeyEnv: 'MANUS_API_KEY',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    model: 'anthropic/claude-sonnet-4-5-20250929',
+    apiKeyEnv: 'OPENROUTER_API_KEY',
     maxTokens: 8192,
-    costPer1kInput: 0,  // Per Manus plan (not per-token)
-    costPer1kOutput: 0
+    costPer1kInput: 0.003,
+    costPer1kOutput: 0.015
   },
   tier3: {
     name: 'claude-opus-4.5',
@@ -44,15 +44,22 @@ const MODELS = {
   }
 };
 
-// Task complexity keywords that trigger Tier 2
+// Task complexity keywords that trigger Tier 2 (Sonnet)
 const COMPLEX_KEYWORDS = [
   'strategy', 'analysis', 'architecture', 'financial', 'research',
   'deep dive', 'multi-step', 'persona generation', 'competitive',
   'business plan', 'market analysis', 'code review', 'security audit',
   'long-form', 'comprehensive', 'detailed report',
-  'requirements', 'specification', 'design document',
+  'requirements', 'specification',
   'go-to-market', 'pricing model', 'revenue model',
   'technical design', 'system design'
+];
+
+// High-stakes deliverable keywords that trigger Tier 3 (Opus)
+const TIER3_KEYWORDS = [
+  'product requirements', 'product specification', 'design document',
+  'final deliverable', 'executive report', 'project plan',
+  'product roadmap', 'business case', 'investment memo'
 ];
 
 // ============================================================
@@ -85,9 +92,9 @@ async function callLLM({
   const tier = forceTier || selectTier(isComplex, taskDescription);
   const modelConfig = MODELS[tier];
 
-  // Tier 3 guard: should have been pre-approved
+  // Tier 3 info log (no approval gate — auto-routed by keywords)
   if (tier === 'tier3') {
-    console.log(`[models] ⚠ TIER 3 (Claude) call by ${agentId}. This should have founder approval.`);
+    console.log(`[models] 🔷 TIER 3 (Opus) call by ${agentId} for high-stakes deliverable.`);
   }
 
   const startTime = Date.now();
@@ -169,19 +176,70 @@ async function callLLM({
       }
     }
 
-    // If Manus fails with credits exhausted, flag for Tier 3 escalation
-    if (tier === 'tier2' && isCreditExhausted(err)) {
-      console.log(`[models] Manus credits exhausted. Tier 3 escalation needed.`);
-      return {
-        content: null,
-        model: modelConfig.name,
-        tier: modelConfig.tier,
-        usage: null,
-        error: 'MANUS_CREDITS_EXHAUSTED'
-      };
+    // If Tier 3 fails, fall back to Tier 2, then Tier 1
+    if (tier === 'tier3') {
+      console.log(`[models] Tier 3 (${modelConfig.name}) failed: ${err.message}. Falling back to tier2...`);
+      try {
+        const t2Config = MODELS['tier2'];
+        const t2Result = await makeAPICall(t2Config, systemPrompt, userMessage);
+        const t2Time = Date.now() - startTime;
+
+        await logModelUsage({
+          agentId,
+          missionStepId,
+          modelName: t2Config.name,
+          modelTier: 'tier2',
+          inputTokens: t2Result.usage?.prompt_tokens || 0,
+          outputTokens: t2Result.usage?.completion_tokens || 0,
+          estimatedCost: estimateCost(t2Config, t2Result.usage),
+          responseTimeMs: t2Time,
+          success: true,
+          errorMessage: null,
+          metadata: { fallbackFrom: 'tier3' }
+        });
+
+        return {
+          content: t2Result.content,
+          model: t2Config.name,
+          tier: 'tier2',
+          usage: t2Result.usage,
+          error: null
+        };
+      } catch (t2Err) {
+        console.log(`[models] Tier 2 fallback also failed: ${t2Err.message}. Falling back to tier1...`);
+        try {
+          const t1Config = MODELS['tier1'];
+          const t1Result = await makeAPICall(t1Config, systemPrompt, userMessage);
+          const t1Time = Date.now() - startTime;
+
+          await logModelUsage({
+            agentId,
+            missionStepId,
+            modelName: t1Config.name,
+            modelTier: 'tier1',
+            inputTokens: t1Result.usage?.prompt_tokens || 0,
+            outputTokens: t1Result.usage?.completion_tokens || 0,
+            estimatedCost: estimateCost(t1Config, t1Result.usage),
+            responseTimeMs: t1Time,
+            success: true,
+            errorMessage: null,
+            metadata: { fallbackFrom: 'tier3_via_tier2' }
+          });
+
+          return {
+            content: t1Result.content,
+            model: t1Config.name,
+            tier: 'tier1',
+            usage: t1Result.usage,
+            error: null
+          };
+        } catch (t1Err) {
+          console.error(`[models] Tier 1 fallback also failed: ${t1Err.message}`);
+        }
+      }
     }
 
-    // If Tier 2 fails (not credit exhaustion), fall back to Tier 1
+    // If Tier 2 fails, fall back to Tier 1
     // WHY: Always fall back — failing is worse than using a cheaper model
     if (tier === 'tier2') {
       console.log(`[models] Tier 2 (${modelConfig.name}) failed: ${err.message}. Falling back to tier1...`);
@@ -233,26 +291,30 @@ async function callLLM({
 
 /**
  * Auto-select the appropriate tier based on complexity flags, keywords, and step context.
- * Default is always Tier 1 (MiniMax). Complex tasks route to Tier 2 (Manus).
+ * Routing: T3 keywords → tier3, isComplex/T2 keywords → tier2, default → tier1.
  *
  * @param {boolean} isComplex - Explicit complexity flag
  * @param {string} taskDescription - Task text for keyword matching
  * @param {Object} [stepContext] - Optional step context
  * @param {boolean} [stepContext.isFinalStep] - If true, upgrades to tier2 for quality
- * @returns {string} 'tier1' | 'tier2'
+ * @returns {string} 'tier1' | 'tier2' | 'tier3'
  */
 function selectTier(isComplex, taskDescription = '', stepContext = {}) {
-  // Don't upgrade to tier2 if Manus isn't configured — stay on tier1
-  const manusAvailable = MODELS.tier2.endpoint && process.env[MODELS.tier2.apiKeyEnv];
-  if (!manusAvailable) return 'tier1';
-
   if (isComplex) return 'tier2';
 
   // Final step in multi-step mission → always tier2 for quality
   if (stepContext && stepContext.isFinalStep) return 'tier2';
 
-  // Auto-detect complexity from task description
   const lower = taskDescription.toLowerCase();
+
+  // Check T3 keywords first (high-stakes deliverables)
+  for (const keyword of TIER3_KEYWORDS) {
+    if (lower.includes(keyword)) {
+      return 'tier3';
+    }
+  }
+
+  // Check T2 keywords (complex reasoning tasks)
   for (const keyword of COMPLEX_KEYWORDS) {
     if (lower.includes(keyword)) {
       return 'tier2';
@@ -276,11 +338,6 @@ async function makeAPICall(modelConfig, systemPrompt, userMessage) {
 
   if (!apiKey) {
     throw new Error(`Missing API key: ${modelConfig.apiKeyEnv}`);
-  }
-
-  // Manus has its own endpoint format — handled separately when configured
-  if (modelConfig.name === 'manus' && !modelConfig.endpoint) {
-    throw new Error('Manus API endpoint not configured. Set MANUS_API_ENDPOINT in .env');
   }
 
   const endpoint = modelConfig.endpoint;
@@ -429,5 +486,6 @@ module.exports = {
   selectTier,
   getModelCosts,
   MODELS,
-  COMPLEX_KEYWORDS
+  COMPLEX_KEYWORDS,
+  TIER3_KEYWORDS
 };

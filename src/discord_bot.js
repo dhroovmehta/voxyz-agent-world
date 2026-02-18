@@ -252,19 +252,21 @@ DEFAULT TO [ACTION:PROPOSAL] for single-step tasks, [ACTION:MULTI_STEP_PROPOSAL]
       });
 
       if (project) {
-        // Determine needed roles and ensure agents exist
-        const neededRoles = agents.determineProjectRoles(projectDesc);
+        // Determine needed roles dynamically via LLM and ensure agents exist
+        const neededRoles = await agents.determineDynamicProjectRoles(projectDesc);
         const roleStatus = [];
 
-        for (const roleCategory of neededRoles) {
-          const existing = await agents.findBestAgentAcrossTeams(roleCategory);
+        for (const role of neededRoles) {
+          const existing = await agents.findBestAgentAcrossTeams(role.category);
           if (existing) {
             roleStatus.push(`${existing.display_name} (${existing.role}) — ready`);
           } else {
-            const roleTitle = missions.ROLE_TITLES[roleCategory] || roleCategory;
-            const hired = await agents.autoHireGapAgent(roleTitle, roleCategory);
+            const hired = await agents.autoHireGapAgent(role.title, role.category, {
+              projectDescription: projectDesc,
+              projectName: projectName
+            });
             if (hired) {
-              roleStatus.push(`${hired.display_name} (${roleTitle}) — newly hired`);
+              roleStatus.push(`${hired.display_name} (${role.title}) — newly hired`);
             }
           }
         }
@@ -456,8 +458,8 @@ async function handleCommand(message, content) {
       }
       let reply = '**Today\'s LLM Costs**\n';
       reply += `Tier 1 (MiniMax): ${costs.tier1.calls} calls, $${costs.tier1.cost.toFixed(4)}\n`;
-      reply += `Tier 2 (Manus): ${costs.tier2.calls} calls\n`;
-      reply += `Tier 3 (Claude): ${costs.tier3.calls} calls, $${costs.tier3.cost.toFixed(4)}\n`;
+      reply += `Tier 2 (Sonnet): ${costs.tier2.calls} calls, $${costs.tier2.cost.toFixed(4)}\n`;
+      reply += `Tier 3 (Opus): ${costs.tier3.calls} calls, $${costs.tier3.cost.toFixed(4)}\n`;
       reply += `**Total: ${costs.total.calls} calls, $${costs.total.cost.toFixed(4)}, ${costs.total.tokens.toLocaleString()} tokens**`;
       await message.reply(reply);
       break;

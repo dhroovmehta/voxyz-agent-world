@@ -129,9 +129,32 @@ async function processProposals() {
         const roleTitle = missions.ROLE_TITLES[bestRole] || bestRole;
         console.log(`[heartbeat] No ${roleTitle} found anywhere. Auto-hiring for proposal #${proposal.id}.`);
 
+        // Extract project context if [PROJECT:N] tag is present
+        let projectContext = null;
+        const projectTagMatch = (taskDescription || '').match(/\[PROJECT:(\d+)\]/);
+        if (projectTagMatch) {
+          const project = await projects.getProject(parseInt(projectTagMatch[1]));
+          if (project) {
+            projectContext = { projectName: project.name, projectDescription: project.description || project.original_message };
+          }
+        }
+
         matchedAgent = await agents.autoHireGapAgent(roleTitle, bestRole);
 
         if (matchedAgent) {
+          // Generate persona immediately for gap-fill agents (they'd otherwise have none)
+          if (!matchedAgent.persona_id) {
+            const persona = await generatePersona(
+              matchedAgent,
+              { role: roleTitle, team_id: matchedAgent.team_id, justification: `Gap-fill for: "${proposal.title}"` },
+              projectContext || (taskDescription ? { projectDescription: taskDescription } : null)
+            );
+            if (persona) {
+              await agents.savePersona({ agentId: matchedAgent.id, ...persona });
+              console.log(`[heartbeat] Persona generated for gap-fill agent ${matchedAgent.display_name}`);
+            }
+          }
+
           await events.logEvent({
             eventType: 'agent_auto_hired',
             agentId: matchedAgent.id,
@@ -419,13 +442,31 @@ async function reQueueProposal(proposalId) {
  * Includes agent identity, soul, skills, and the complete system prompt.
  * Falls back to a hardcoded basic persona if LLM fails.
  */
-async function generatePersona(agent, hire) {
+async function generatePersona(agent, hire, projectContext = null) {
   // Get team context: who are the colleagues?
   const teamAgents = await agents.getTeamAgents(hire.team_id);
   const colleagues = teamAgents
     .filter(a => a.id !== agent.id)
     .map(a => `${a.display_name} (${a.role})`)
     .join(', ') || 'none yet';
+
+  // Build project context block if available
+  let projectBlock = '';
+  if (projectContext && (projectContext.projectDescription || projectContext.projectName)) {
+    projectBlock = `
+
+INDUSTRY/PROJECT CONTEXT:
+This agent is being hired for a specific project. Their persona MUST include
+domain expertise relevant to this project:
+- Project: ${projectContext.projectName || 'Unnamed'}
+- Description: ${projectContext.projectDescription || 'No description'}
+
+CRITICAL: Weave genuine domain expertise about this industry into the Skills
+and Identity sections. For example, if the project is "Real Estate AI Agent",
+a Research Analyst should include: real estate market knowledge, MLS data familiarity,
+lead gen metrics, PropTech trends. Do NOT just mention the project name —
+integrate actual domain knowledge.`;
+  }
 
   const prompt = `You are the Persona Architect for Frasier. Generate a complete Structured Enhancement Protocol (SEP) persona for a new AI agent.
 
@@ -434,7 +475,7 @@ AGENT DETAILS:
 - Role: ${hire.role}
 - Team: ${hire.team_id}
 - Colleagues: ${colleagues}
-- Hiring justification: ${hire.justification || 'General team need'}
+- Hiring justification: ${hire.justification || 'General team need'}${projectBlock}
 
 Generate the persona in this EXACT format (use the exact delimiters):
 
@@ -513,7 +554,14 @@ ${identityMd}
 - You are ${agent.display_name}, a ${hire.role} on ${hire.team_id}.
 - Respond in character. Your personality influences your work output.
 - Be concise and action-oriented. Deliver results, not filler.
-- Reference your memory and past experiences when relevant.`;
+- Reference your memory and past experiences when relevant.
+
+## Quality Standards (Non-Negotiable)
+- You are the DOER. Produce actual deliverables, not instructions or frameworks.
+- Every claim must be backed by specific data or clear reasoning.
+- No filler phrases, no generic content, no AI slop.
+- If you lack information, STATE what's missing rather than filling with generic text.
+- Your output must be executive-ready and industry-grade.`;
 
   return { agentMd, soulMd, skillsMd, identityMd, fullSepPrompt };
 }
@@ -555,8 +603,10 @@ ${identityMd}
 // ============================================================
 
 /**
- * Find steps in review that need approvals created,
- * and route them through the QA → Team Lead chain.
+ * Find steps in review that need approvals created.
+ * Priority: domain expert (across all teams) → QA (same team) → Team Lead (same team).
+ * WHY domain expert first: a Real Estate Analyst reviewing real estate research
+ * catches domain errors that a generic QA never would.
  */
 async function processApprovals() {
   const stepsNeedingReview = await missions.getStepsNeedingReview();
@@ -573,16 +623,34 @@ async function processApprovals() {
 
       if (!missionData) continue;
 
+      // Try domain expert first (searches ALL active agents, not just this team)
+      const domainRole = missions.routeByKeywords(step.description || '');
+      if (domainRole) {
+        const allAgents = await agents.getAllActiveAgents();
+        const domainExpert = allAgents.find(a => {
+          if (a.id === step.assigned_agent_id) return false; // Can't review own work
+          const keywords = missions.ROLE_KEYWORDS[domainRole] || [];
+          return keywords.some(kw => (a.role || '').toLowerCase().includes(kw));
+        });
+
+        if (domainExpert) {
+          await missions.createApproval({
+            missionStepId: step.id,
+            reviewerAgentId: domainExpert.id,
+            reviewType: 'team_lead' // Gets tier2 LLM + is final review
+          });
+          console.log(`[heartbeat] Step #${step.id} sent to domain expert ${domainExpert.display_name} (${domainExpert.role})`);
+          continue;
+        }
+      }
+
+      // Fallback: QA → Team Lead chain (original behavior)
       const teamAgents = await agents.getTeamAgents(missionData.team_id);
 
-      // Find QA agent on the team
       const qaAgent = teamAgents.find(a => a.agent_type === 'qa' || a.role?.toLowerCase().includes('qa'));
-
-      // Find team lead
       const teamLead = teamAgents.find(a => a.agent_type === 'team_lead');
 
       if (qaAgent) {
-        // Route to QA first
         await missions.createApproval({
           missionStepId: step.id,
           reviewerAgentId: qaAgent.id,
@@ -590,7 +658,6 @@ async function processApprovals() {
         });
         console.log(`[heartbeat] Step #${step.id} sent to QA (${qaAgent.display_name})`);
       } else if (teamLead) {
-        // No QA? Go straight to team lead
         await missions.createApproval({
           missionStepId: step.id,
           reviewerAgentId: teamLead.id,
@@ -598,7 +665,6 @@ async function processApprovals() {
         });
         console.log(`[heartbeat] Step #${step.id} sent to Team Lead (${teamLead.display_name})`);
       } else {
-        // No reviewers available — auto-approve
         await missions.approveStep(step.id);
         console.log(`[heartbeat] Step #${step.id} auto-approved (no reviewers on team)`);
       }
@@ -707,8 +773,8 @@ async function checkCostAlert() {
       `Daily LLM spend has reached $${dailyCost.toFixed(4)} (threshold: $${limit})`,
       '',
       `Tier 1 (MiniMax): ${costs.tier1.calls} calls, $${costs.tier1.cost.toFixed(4)}`,
-      `Tier 2 (Manus):   ${costs.tier2.calls} calls`,
-      `Tier 3 (Claude):  ${costs.tier3.calls} calls, $${costs.tier3.cost.toFixed(4)}`,
+      `Tier 2 (Sonnet):  ${costs.tier2.calls} calls, $${costs.tier2.cost.toFixed(4)}`,
+      `Tier 3 (Opus):    ${costs.tier3.calls} calls, $${costs.tier3.cost.toFixed(4)}`,
       `Total tokens: ${costs.total.tokens.toLocaleString()}`
     ].join('\n');
 

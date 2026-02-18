@@ -908,9 +908,12 @@ function getStandingTeamForRole(roleCategory) {
  *
  * @param {string} roleTitle - Human-readable role (e.g. "Content Creator")
  * @param {string} roleCategory - Category key (e.g. "content")
+ * @param {Object} [options] - Optional project context for persona generation
+ * @param {string} [options.projectDescription] - Project description for industry-specific persona
+ * @param {string} [options.projectName] - Project name
  * @returns {Object|null} Created agent, or null on failure
  */
-async function autoHireGapAgent(roleTitle, roleCategory) {
+async function autoHireGapAgent(roleTitle, roleCategory, options = {}) {
   const teamId = getStandingTeamForRole(roleCategory);
 
   const agent = await createAgent({
@@ -920,15 +923,102 @@ async function autoHireGapAgent(roleTitle, roleCategory) {
   });
 
   if (agent) {
+    // Attach project context so persona generation can use it
+    if (options.projectDescription || options.projectName) {
+      agent._pendingPersonaContext = {
+        projectDescription: options.projectDescription,
+        projectName: options.projectName
+      };
+    }
     console.log(`[agents] Gap-fill agent ${agent.display_name} (${roleTitle}) auto-hired for ${teamId}`);
   }
 
   return agent;
 }
 
+const VALID_CATEGORIES = ['research', 'strategy', 'content', 'engineering', 'qa', 'marketing', 'knowledge'];
+
+const ROLE_TITLES_FALLBACK = {
+  research: 'Research Analyst',
+  strategy: 'Strategy Lead',
+  content: 'Content Creator',
+  engineering: 'Full-Stack Engineer',
+  qa: 'QA Engineer',
+  marketing: 'Growth Marketer',
+  knowledge: 'Knowledge Curator'
+};
+
+/**
+ * Determine what roles a project needs using an LLM call.
+ * Returns free-form role titles tailored to the project's industry/domain.
+ * Falls back to keyword matching if LLM fails.
+ *
+ * @param {string} description - Project description
+ * @returns {Object[]} Array of { title, category, reason }
+ */
+async function determineDynamicProjectRoles(description) {
+  const models = require('./models');
+
+  try {
+    const result = await models.callLLM({
+      systemPrompt: 'You determine what expert roles a project needs. Return ONLY valid JSON.',
+      userMessage: `Analyze this project and determine what specialist roles are needed.
+
+PROJECT: "${description}"
+
+Return a JSON array of 2-5 roles. Each role should be a SPECIALIST with domain expertise
+specific to this project's industry. Do NOT use generic titles like "Research Analyst" —
+use industry-specific titles like "Real Estate Market Analyst" or "Healthcare Compliance Specialist".
+
+For each role, also provide the closest general category from this list for team routing:
+research, strategy, content, engineering, qa, marketing, knowledge
+
+JSON format (no markdown, no backticks, ONLY the JSON array):
+[
+  { "title": "Real Estate Market Analyst", "category": "research", "reason": "Deep market research on real estate AI tools and lead gen" },
+  { "title": "AI Product Architect", "category": "engineering", "reason": "Design the AI agent architecture and integrations" }
+]`,
+      agentId: 'system',
+      forceTier: 'tier1'
+    });
+
+    if (result.error || !result.content) {
+      return keywordFallbackRoles(description);
+    }
+
+    const jsonStr = result.content.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    const roles = JSON.parse(jsonStr);
+
+    if (Array.isArray(roles) && roles.length > 0) {
+      return roles.map(r => ({
+        title: r.title || 'Specialist',
+        category: VALID_CATEGORIES.includes(r.category) ? r.category : 'research',
+        reason: r.reason || ''
+      }));
+    }
+  } catch (parseErr) {
+    console.error(`[agents] Failed to parse dynamic roles: ${parseErr.message}`);
+  }
+
+  return keywordFallbackRoles(description);
+}
+
+/**
+ * Convert keyword-matched categories to { title, category, reason } format.
+ */
+function keywordFallbackRoles(description) {
+  const categories = determineProjectRoles(description);
+  return categories.map(cat => ({
+    title: ROLE_TITLES_FALLBACK[cat] || cat,
+    category: cat,
+    reason: 'Keyword-matched fallback'
+  }));
+}
+
 /**
  * Determine which roles are needed for a project based on its description.
  * Returns an array of role category keys (e.g. ['research', 'engineering', 'content']).
+ * @deprecated Use determineDynamicProjectRoles() instead.
  *
  * @param {string} description - Project description
  * @returns {string[]} Array of role categories needed
@@ -937,7 +1027,6 @@ function determineProjectRoles(description) {
   const lower = (description || '').toLowerCase();
   const roles = new Set();
 
-  // Use missions.EXPERTISE_MAP style keyword matching
   const EXPERTISE_KEYWORDS = {
     research: ['research', 'analysis', 'market', 'competitive', 'trends', 'intelligence', 'data', 'report', 'analyze'],
     strategy: ['strategy', 'business plan', 'roadmap', 'pricing', 'financial', 'revenue', 'growth plan'],
@@ -954,7 +1043,6 @@ function determineProjectRoles(description) {
     }
   }
 
-  // Default: at least research
   if (roles.size === 0) roles.add('research');
 
   return Array.from(roles);
@@ -998,5 +1086,6 @@ module.exports = {
   findBestAgentAcrossTeams,
   getStandingTeamForRole,
   autoHireGapAgent,
-  determineProjectRoles
+  determineProjectRoles,
+  determineDynamicProjectRoles
 };

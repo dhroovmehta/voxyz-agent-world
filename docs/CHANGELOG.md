@@ -1,0 +1,87 @@
+# Frasier — Changelog
+
+All notable changes to this project are documented here.
+
+---
+
+## [0.4.0] — 2026-02-17 (Quality Overhaul)
+
+### Added
+- **Tier 3 keyword routing:** New `TIER3_KEYWORDS` constant routes high-stakes deliverables (product requirements, design documents, executive reports, business cases, investment memos) to Claude Opus automatically
+- **T3→T2→T1 fallback chain:** If Opus fails, degrades to Sonnet, then MiniMax — never fails silently
+- **"YOU ARE the expert" prompt framing:** All 7 domain instructions + generic fallback + universal quality standards now enforce agents as DOERs, not ADVISORs
+- **Dynamic role determination:** `determineDynamicProjectRoles()` uses T1 LLM call to identify industry-specific specialist roles (e.g., "Real Estate Market Analyst", "Healthcare Compliance Specialist") instead of hardcoded 7-category keyword matching
+- **Industry-specific persona generation:** Gap-fill agents now get personas immediately upon hiring, with project context injected for domain expertise. Quality standards baked into every persona.
+- **Domain expert reviews:** `processApprovals()` searches ALL active agents for a domain expert before falling back to QA/Team Lead. Expert cannot review own work.
+- **5 new test suites:** `tier-restructure` (22), `prompt-quality` (21), `dynamic-roles` (8), `industry-hiring` (2), `expert-reviews` (7) — total 144 tests passing
+
+### Changed
+- **Tier 2 model:** Manus (never configured) → Claude Sonnet 4.5 via OpenRouter (`anthropic/claude-sonnet-4-5-20250929`)
+- **Tier 2 API key:** `MANUS_API_KEY` → `OPENROUTER_API_KEY` (same key as T1/T3)
+- **`selectTier()` routing:** Now 3-tier (T3 keywords → T2 keywords → T1 default). Previously only T1/T2 with Manus availability check that always returned false.
+- **`autoHireGapAgent()` signature:** Now accepts optional `options` parameter with `{ projectDescription, projectName }`
+- **`generatePersona()` signature:** Now accepts optional `projectContext` parameter
+- **`!costs` display:** "Manus" → "Sonnet", "Claude" → "Opus", T2 now shows cost
+- **Cost alert display:** Same naming updates as `!costs`
+- **`discord_bot.js` NEW_PROJECT handler:** Uses `determineDynamicProjectRoles()` (async, LLM-based) instead of `determineProjectRoles()` (sync, keyword-based)
+
+### Removed
+- **Manus-specific code:** `MANUS_CREDITS_EXHAUSTED` error handling in models.js and worker.js
+- **Manus endpoint check:** `makeAPICall()` no longer checks for Manus endpoint configuration
+- **Manus availability guard:** `selectTier()` no longer checks `MODELS.tier2.endpoint && process.env[MODELS.tier2.apiKeyEnv]`
+- **T3 approval gate:** Tier 3 no longer requires founder approval — auto-routes by keyword
+
+---
+
+## [0.3.1] — 2026-02-17 (Post-Overhaul Fixes)
+
+### Fixed
+- **Clean proposal titles:** `cleanProposalTitle()` strips Discord mentions, URLs, `[PROJECT:N]` tags; extracts first sentence; caps at 120 chars
+- **T2→T1 fallback:** When Manus (T2) failed for non-credit reasons, steps were permanently stuck. Now auto-retries with T1.
+- **Announcement error logging:** `announceCompletedSteps()` no longer silently swallows Supabase query errors
+
+---
+
+## [0.3.0] — 2026-02-17 (System Overhaul)
+
+### Added
+- **Test infrastructure:** Jest + in-memory Supabase mock + factory helpers. 84 tests across 7 suites.
+- **Roster injection:** Frasier now sees all teams + agents in system prompt. Uses "Name (Role)" format.
+- **Context enrichment pipeline:** `buildTaskContext()` combines original message + domain mandates + output template + quality standards
+- **Auto tier selection:** `selectTier()` with keyword-based T2 upgrades + final step detection
+- **Persona-as-rubric:** `QUALITY_RUBRICS` baked into agent personas (100% retrieval)
+- **Enhanced reviews:** 5-criterion rubric scoring, auto-reject on score < 3, structured feedback
+- **Project lifecycle:** Discovery → Requirements → Design → Build → Test → Deploy → Completed
+- **Smart routing:** Cross-team agent matching via `findBestAgentAcrossTeams()`
+- **Gap-fill hiring:** `autoHireGapAgent()` for instant agent creation when no match found
+
+---
+
+## [0.2.0] — 2026-02-15
+
+### Added
+- Full memory system (persistent cumulative, lesson generation, founder conversation memory)
+- Skills tracking and growth
+- Dynamic hiring with anime name pool
+- Standup system (daily at 9am ET)
+- Web access (DuckDuckGo search, HTTP fetch)
+- Buffer social media integration
+- Google Drive backup (daily at 3am ET)
+- GitHub daily state push (4am ET)
+- Notion task boards
+- Health checks and cost alerts
+- Daily summary (Discord + email)
+- Persona-based upskilling (after 5 QA rejections)
+
+---
+
+## [0.1.0] — 2026-02-14
+
+### Added
+- Core pipeline: mission proposals → missions → steps → LLM execution → Discord output
+- 3 PM2 processes: discord_bot, heartbeat, worker
+- 7 agents deployed (Jet, Edward, Faye, Spike, Ein, Vicious, Julia)
+- Tiered LLM routing (MiniMax T1, Manus T2 placeholder, Opus T3)
+- Approval chain (QA → Team Lead)
+- Discord bot with founder commands (!status, !teams, !costs, etc.)
+- PostgreSQL (Supabase) as sole orchestration layer

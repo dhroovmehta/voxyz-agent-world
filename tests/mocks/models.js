@@ -23,7 +23,7 @@ module.exports = {
   getModelCosts: mockGetModelCosts,
   MODELS: {
     tier1: { name: 'minimax', tier: 'tier1', maxTokens: 4096 },
-    tier2: { name: 'manus', tier: 'tier2', maxTokens: 8192 },
+    tier2: { name: 'claude-sonnet-4.5', tier: 'tier2', maxTokens: 8192 },
     tier3: { name: 'claude-opus-4.5', tier: 'tier3', maxTokens: 4096 }
   },
   COMPLEX_KEYWORDS: [
@@ -31,5 +31,10 @@ module.exports = {
     'deep dive', 'multi-step', 'persona generation', 'competitive',
     'business plan', 'market analysis', 'code review', 'security audit',
     'long-form', 'comprehensive', 'detailed report'
+  ],
+  TIER3_KEYWORDS: [
+    'product requirements', 'product specification', 'design document',
+    'final deliverable', 'executive report', 'project plan',
+    'product roadmap', 'business case', 'investment memo'
   ]
 };

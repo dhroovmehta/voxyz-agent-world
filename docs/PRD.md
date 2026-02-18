@@ -1,9 +1,9 @@
 # Product Requirements Document: Frasier
 
-**Version:** 1.0  
-**Date:** February 11, 2026  
-**Author:** Zero (Founder) with Kai (Technical Lead)  
-**Status:** In Development - Target Launch Feb 14, 2026 EOD
+**Version:** 1.1
+**Date:** February 17, 2026
+**Author:** Zero (Founder) with Kai (Technical Lead)
+**Status:** Live — Quality Overhaul (v0.4.0) shipped Feb 17, 2026
 
 ---
 
@@ -388,11 +388,15 @@ Three governance models:
   - `discord.js` - Discord bot framework
   - `openai` - LLM API client (via OpenRouter)
 
-**LLM Provider:** OpenRouter
-- **Model:** anthropic/claude-3.5-sonnet
-- **API:** OpenAI-compatible
-- **Cost:** ~$0.50-1.00 per complex task
-- **Rationale:** Flexible model selection, competitive pricing, OpenAI-compatible API
+**LLM Provider:** OpenRouter (Tiered)
+- **Tier 1 (Default):** MiniMax (`minimax/minimax-01`) — cheapest, handles simple tasks
+- **Tier 2 (Complex):** Claude Sonnet 4.5 (`anthropic/claude-sonnet-4-5-20250929`) — research, strategy, final steps
+- **Tier 3 (High-Stakes):** Claude Opus (`anthropic/claude-opus-4-20250514`) — PRDs, design docs, executive reports
+- **API:** OpenAI-compatible via OpenRouter for all tiers
+- **Routing:** `selectTier()` auto-routes by keyword matching (T3 keywords → T2 keywords → T1 default)
+- **Fallback chain:** T3→T2→T1 if higher tier fails
+- **Cost:** ~$0.01/task (T1), ~$0.10/task (T2), ~$1.00/task (T3)
+- **Rationale:** Cost-optimized — 80% of tasks use cheapest tier, only complex/high-stakes work uses expensive models
 
 ### Communication Layer
 
@@ -518,8 +522,9 @@ The system follows a **minimalist event-driven architecture** with three core pr
                                     │   OpenRouter     │
                                     │  (LLM Gateway)   │
                                     │                  │
-                                    │  Claude 3.5      │
-                                    │  Sonnet          │
+                                    │  T1: MiniMax     │
+                                    │  T2: Sonnet 4.5  │
+                                    │  T3: Opus        │
                                     └──────────────────┘
 ```
 
@@ -627,7 +632,9 @@ The system follows a **minimalist event-driven architecture** with three core pr
 
 ### Leadership
 
-#### Jet - Chief of Staff / COO
+#### Frasier - Chief of Staff / COO
+
+> **Note:** Originally named "Jet" in the spec. Renamed to **Frasier** by founder (the system's namesake). Has a $20k/month north star revenue goal baked into his SEP.
 
 **Role:** Strategic executive combining operations, technology, and leadership
 
@@ -1200,6 +1207,82 @@ Subsequent checks skip already-announced tasks
 
 ---
 
+### Quality Overhaul Decisions (v0.4.0 — Feb 17, 2026)
+
+#### Decision 10: Tiered LLM Routing (MiniMax → Sonnet → Opus)
+
+**Context:** Manus (T2) was never configured — all tasks ran on MiniMax (cheapest). Research/strategy tasks produced shallow results.
+
+**Decision:** Replace Manus with Claude Sonnet 4.5 via OpenRouter. Add Opus as T3 for high-stakes deliverables. Auto-route by keyword matching.
+
+**Rationale:**
+- MiniMax is fine for simple tasks but lacks depth for research/strategy
+- Sonnet 4.5 provides the quality boost needed for complex work
+- Opus reserved for PRDs, design docs, executive reports
+- All through OpenRouter — single API key, single billing
+
+**Trade-offs:** Higher cost for T2/T3 tasks, but 80% of tasks still use cheap T1.
+
+---
+
+#### Decision 11: Dynamic LLM-Based Role Determination
+
+**Context:** `determineProjectRoles()` used hardcoded 7-category keyword matching. Every new project type (real estate, healthcare, etc.) needed code changes.
+
+**Decision:** Replace with `determineDynamicProjectRoles()` — an LLM call (T1, cheap) that returns free-form industry-specific role titles with category mapping.
+
+**Rationale:**
+- Any project, any industry — no code changes needed
+- LLM returns titles like "Real Estate Market Analyst" instead of generic "Research Analyst"
+- Category field maps to standing teams for routing (still uses existing keyword system)
+- Falls back to keyword matching if LLM fails
+
+**Trade-offs:** Extra T1 LLM call per project creation (~$0.01). Worth it for flexibility.
+
+---
+
+#### Decision 12: Persona Modification > Lessons for Upskilling
+
+**Context:** Need agents to get smarter over time. Two approaches: lessons (top 5 retrieved per call) or persona modification (always in system prompt).
+
+**Decision:** Persona is the primary vehicle for agent expertise. Quality standards baked into every persona. Lessons are supplementary.
+
+**Rationale:**
+- Persona is always in the system prompt = 100% retrieval rate
+- Lessons compete for top 5 slots = variable retrieval
+- Industry-specific domain knowledge belongs in persona, not lessons
+- Quality standards ("YOU ARE the DOER") must be non-negotiable = persona
+
+---
+
+#### Decision 13: Domain Expert Reviews Over Generic QA
+
+**Context:** QA and Team Lead agents rubber-stamped everything regardless of domain. A QA Engineer can't evaluate the quality of a real estate market analysis.
+
+**Decision:** `processApprovals()` now searches ALL active agents for a domain expert before falling back to QA/Team Lead.
+
+**Rationale:**
+- A "Real Estate Market Analyst" reviewing a market research report will catch domain errors
+- Cross-team search ensures the best reviewer is found regardless of team assignment
+- Expert cannot review own work (prevents self-approval)
+- Graceful fallback to QA→Team Lead when no expert exists
+
+---
+
+#### Decision 14: Remove Tier 3 Founder Approval Gate
+
+**Context:** T3 (Opus) originally required founder approval before use. This created a bottleneck — founder had to be online for high-quality deliverables.
+
+**Decision:** T3 auto-routes by keyword. No approval needed.
+
+**Rationale:**
+- Founder wants autonomous operation
+- T3 keywords are well-defined (PRDs, design docs, executive reports)
+- Cost is predictable — only specific task types trigger T3
+- Founder can monitor via `!costs` command
+
+---
+
 ### Operational Decisions
 
 #### Decision 8: 4-Day Sprint Timeline
@@ -1473,91 +1556,54 @@ Founder is non-technical but needs to run commands on VPS. Initial instructions 
 
 ## Future Roadmap
 
-### Phase 2: Smart Routing & Multi-Agent Operations
+> **Status as of Feb 17, 2026:** Phases 2-3 complete (smart routing, memory, integrations, quality overhaul). See `COMPLETED.md` for details.
 
-**Timeline:** Week 2-3 (Feb 15-28, 2026)
+### COMPLETED — Phase 2: Smart Routing & Multi-Agent Operations (v0.2.0–v0.3.0)
+- Smart routing via keyword matching + cross-team agent search
+- Dynamic LLM-based role determination (any industry, no code changes)
+- Gap-fill auto-hiring with industry-specific personas
+- QA → Team Lead → Domain Expert review chain
+- Full memory system + lesson generation
+- Daily standups, Google Drive backup, Notion task boards
+- Health checks, cost alerts, daily summaries
 
-**Features:**
-- **Smart routing:** Parse mission description and assign to appropriate agent (Faye, Spike, Ein, Vicious, Julia)
-- **Keyword-based routing:** Match keywords to agent expertise
-- **Agent collaboration:** Agents can request help from each other
-- **Chief Agent approval:** High-stakes missions routed to Jet for review
+### COMPLETED — Phase 2.5: Quality Overhaul (v0.4.0)
+- Tiered LLM (MiniMax → Sonnet 4.5 → Opus) with T3→T2→T1 fallback
+- "YOU ARE the expert" prompt framing across all domains
+- Dynamic role determination (LLM-based, replaces hardcoded taxonomy)
+- Industry-specific persona generation with project context
+- Domain expert reviews (cross-team specialist routing)
+- 144 tests across 12 suites
 
-**Acceptance Criteria:**
-- Content missions go to Faye, engineering to Spike, etc.
-- Agents can @mention each other in #team-chat
-- Jet approves/rejects proposals over $100 spending
-
----
-
-### Phase 3: Notion & Google Workspace Integration
-
-**Timeline:** Week 4-5 (Mar 1-14, 2026)
-
-**Features:**
-- **Auto-publish deliverables:** Agent outputs automatically saved to Notion pages
-- **Google Drive integration:** Research reports, content drafts saved to Drive
-- **Gmail integration:** Agents can read/send emails on founder's behalf
-- **Google Calendar:** Agents can schedule meetings and set reminders
-
-**Acceptance Criteria:**
-- Edward's research reports appear in Notion knowledge base
-- Faye's content drafts saved to Google Drive
-- Daily standup summary posted to Notion automatically
-
----
-
-### Phase 4: M&A Team Deployment
-
-**Timeline:** Week 6-8 (Mar 15-31, 2026)
+### NEXT — Agent Social Dynamics
+**Timeline:** Feb 18-21, 2026
 
 **Features:**
-- **3 new agents:** M&A Advisor, Deal Structure Expert, SBA Loan Specialist
-- **Separate Discord channels:** #ma-team, #deal-pipeline
-- **Deal tracking:** Database tables for deals, due diligence, financing
-- **Coordination with main team:** Edward provides research, Julia documents deals
+- **Conversation scheduling:** 10-15 agent conversations per day (debate, brainstorm, mentoring, watercooler)
+- **Affinity matrix:** Agent relationship tracking (agent_affinity table, score -1 to 1)
+- **Watercooler conversations:** 2-3 casual chats/day between high-affinity pairs
 
-**Acceptance Criteria:**
-- M&A team can source and evaluate small business acquisition opportunities
-- Deal pipeline visible in dedicated channels
-- SBA loan specialist provides financing guidance
+### THEN — Quick Wins
+- Standup publishing to Notion/Drive
+- Missing founder commands (`!standup`, `!memory <agent>`, `!policy`, `!reassign`)
 
----
+### THEN — Agent Personality
+- Speaking style drift (style tokens accumulating over time)
+- Debate + mentoring conversations
 
-### Phase 5: Frontend Visualization
-
-**Timeline:** Month 3 (Apr 2026)
+### THEN — Frontend (Multi-Session)
 
 **Features:**
-- **Pixel-art office:** Visual representation of agent activity
-- **Real-time updates:** See agents "working" on tasks
-- **Agent profiles:** Click agent to see personality, current task, history
-- **Mission dashboard:** Overview of all active missions
+- **Pixel-art office:** Next.js + HTML5 Canvas, agent sprites at desk positions
+- **Real-time updates:** Supabase real-time subscriptions for live agent activity
+- **Dashboard panels:** Active missions, recent outputs, agent status, conversation feed, cost tracker
 
-**Tech Stack:** Next.js + Supabase real-time subscriptions
+**Tech Stack:** Next.js 14+, TypeScript, TailwindCSS, @supabase/supabase-js
 
-**Acceptance Criteria:**
-- Founder can see agent activity without opening Discord
-- Visual feedback when tasks are completed
-- Mobile-responsive design
-
----
-
-### Phase 6: Advanced Agent Behaviors
-
-**Timeline:** Month 4-6 (May-Jul 2026)
-
-**Features:**
-- **Affinity system:** Agents build relationships based on collaboration
-- **Speaking style evolution:** Agents adapt language based on experience
-- **Proactive suggestions:** Agents propose missions without being asked
-- **Learning from feedback:** Agents improve based on founder's reactions
-- **Watercooler chats:** Casual agent-to-agent conversations
-
-**Acceptance Criteria:**
-- Agents who collaborate frequently develop higher affinity
-- Agent responses evolve over time (e.g., Faye references past successful content)
-- Agents suggest relevant missions based on business goals
+### FINALLY — Polish & Scaling
+- Policy engine integration (spending limits enforced at task assignment)
+- Multi-business runtime support
+- Agent-to-agent ad-hoc messaging
 
 ---
 
@@ -1779,6 +1825,7 @@ pm2 resurrect
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | Feb 11, 2026 | Kai | Initial comprehensive PRD created from conversation history |
+| 1.1 | Feb 17, 2026 | Kael | Updated LLM tiers (MiniMax/Sonnet/Opus), added Quality Overhaul decisions (10-14), updated roadmap, noted Frasier as CoS |
 
 ---
 
