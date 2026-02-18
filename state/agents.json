@@ -68,5 +68,33 @@
     "created_at": "2026-02-11T19:49:32.760573+00:00",
     "updated_at": "2026-02-11T19:49:32.760573+00:00",
     "retired_at": null
+  },
+  {
+    "id": "agent-ritsuko-1771357483840",
+    "name": "Ritsuko (Growth Marketer)",
+    "display_name": "Ritsuko",
+    "role": "Growth Marketer",
+    "title": "Growth Marketer",
+    "team_id": "team-execution",
+    "agent_type": "sub_agent",
+    "status": "active",
+    "persona_id": null,
+    "created_at": "2026-02-17T19:44:43.897593+00:00",
+    "updated_at": "2026-02-17T20:30:30.493+00:00",
+    "retired_at": null
+  },
+  {
+    "id": "agent-kaworu-1771357512500",
+    "name": "Kaworu (Full-Stack Engineer)",
+    "display_name": "Kaworu",
+    "role": "Full-Stack Engineer",
+    "title": "Full-Stack Engineer",
+    "team_id": "team-execution",
+    "agent_type": "sub_agent",
+    "status": "active",
+    "persona_id": null,
+    "created_at": "2026-02-17T19:45:12.581131+00:00",
+    "updated_at": "2026-02-17T20:30:30.493+00:00",
+    "retired_at": null
   }
 ]
