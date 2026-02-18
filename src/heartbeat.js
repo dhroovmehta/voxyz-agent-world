@@ -675,6 +675,67 @@ async function processApprovals() {
 }
 
 // ============================================================
+// AUTO-PHASE-PROGRESSION
+// ============================================================
+
+// Phase-specific task descriptions so agents know what to produce
+const PHASE_TASKS = {
+  requirements: 'Define detailed product requirements and specifications. Include: target users, core features with acceptance criteria, technical constraints, integrations needed, and success metrics. Produce the ACTUAL requirements document.',
+  design: 'Create the system design and architecture. Include: component diagram, data model, API design, technology choices with rationale, and user flow. Produce the ACTUAL design document.',
+  build: 'Implement the core product based on the requirements and design. Write the actual code, configuration, and setup instructions. Produce working, deployable artifacts.',
+  test: 'Test the implementation thoroughly. Include: test plan, test cases, results of manual/automated testing, bugs found, and quality assessment. Produce the ACTUAL test report.',
+  deploy: 'Prepare for production deployment. Include: deployment checklist, environment setup, monitoring plan, rollback procedure, and launch readiness assessment. Produce the ACTUAL deployment plan.'
+};
+
+/**
+ * Create a mission proposal for the next project phase.
+ * Called automatically when a project advances phases.
+ */
+async function createNextPhaseMission(project, completedMission) {
+  const phase = project.phase;
+  const taskDescription = PHASE_TASKS[phase] || `Continue work on the ${phase} phase.`;
+
+  // Get the result from the completed mission's steps for context
+  let priorOutput = '';
+  try {
+    const { data: steps } = await require('./lib/supabase')
+      .from('mission_steps')
+      .select('result')
+      .eq('mission_id', completedMission.id)
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (steps && steps[0] && steps[0].result) {
+      // Truncate to avoid massive proposals
+      priorOutput = steps[0].result.substring(0, 2000);
+    }
+  } catch (err) {
+    console.error(`[heartbeat] Failed to fetch prior phase output:`, err.message);
+  }
+
+  const description = `[PROJECT:${project.id}] ${taskDescription}
+
+PROJECT: ${project.name}
+PHASE: ${phase}
+${project.description ? `DESCRIPTION: ${project.description}` : ''}
+
+${priorOutput ? `PRIOR PHASE OUTPUT (summary):\n${priorOutput}` : ''}`;
+
+  const proposal = await missions.createProposal({
+    proposingAgentId: 'frasier',
+    title: `[PROJECT:${project.id}] ${phase.charAt(0).toUpperCase() + phase.slice(1)}: ${project.name}`,
+    description,
+    priority: 'normal'
+  });
+
+  if (proposal) {
+    console.log(`[heartbeat] Auto-created ${phase} phase proposal #${proposal.id} for project #${project.id}`);
+  } else {
+    console.error(`[heartbeat] Failed to auto-create ${phase} phase proposal for project #${project.id}`);
+  }
+}
+
+// ============================================================
 // MISSION COMPLETION CHECK
 // ============================================================
 
@@ -713,6 +774,11 @@ async function checkMissions() {
               description: `Project "${project.name}" advanced to ${project.phase} phase`,
               data: { projectId: project.id, phase: project.phase }
             });
+
+            // AUTO-PROGRESS: Create next phase mission if project isn't completed
+            if (project.phase !== 'completed') {
+              await createNextPhaseMission(project, mission);
+            }
           }
         }
       } catch (err) {
