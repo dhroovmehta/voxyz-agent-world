@@ -367,7 +367,7 @@
 - **Tests:** 22 in `tests/tier-restructure.test.js`
 - **Problem:** Tier 2 (Manus) was never configured — endpoint was `null`, API key `MANUS_API_KEY` never set. All tasks defaulted to Tier 1 (MiniMax), even research/strategy tasks that needed deeper reasoning.
 - **Changes:**
-  - T2 replaced: `manus` → `claude-sonnet-4.5` via OpenRouter (`anthropic/claude-sonnet-4-5-20250929`)
+  - T2 replaced: `manus` → `claude-sonnet-4.5` via OpenRouter (`anthropic/claude-sonnet-4.5`)
   - T2 now uses `OPENROUTER_API_KEY` (same key as T1/T3, no new config needed)
   - T2 cost tracking: $0.003/1K input, $0.015/1K output
   - T3 approval gate removed — auto-routes by keyword, info log only

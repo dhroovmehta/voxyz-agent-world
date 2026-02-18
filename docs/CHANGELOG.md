@@ -16,7 +16,7 @@ All notable changes to this project are documented here.
 - **5 new test suites:** `tier-restructure` (22), `prompt-quality` (21), `dynamic-roles` (8), `industry-hiring` (2), `expert-reviews` (7) — total 144 tests passing
 
 ### Changed
-- **Tier 2 model:** Manus (never configured) → Claude Sonnet 4.5 via OpenRouter (`anthropic/claude-sonnet-4-5-20250929`)
+- **Tier 2 model:** Manus (never configured) → Claude Sonnet 4.5 via OpenRouter (`anthropic/claude-sonnet-4.5`)
 - **Tier 2 API key:** `MANUS_API_KEY` → `OPENROUTER_API_KEY` (same key as T1/T3)
 - **`selectTier()` routing:** Now 3-tier (T3 keywords → T2 keywords → T1 default). Previously only T1/T2 with Manus availability check that always returned false.
 - **`autoHireGapAgent()` signature:** Now accepts optional `options` parameter with `{ projectDescription, projectName }`

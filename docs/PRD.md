@@ -390,8 +390,8 @@ Three governance models:
 
 **LLM Provider:** OpenRouter (Tiered)
 - **Tier 1 (Default):** MiniMax (`minimax/minimax-01`) — cheapest, handles simple tasks
-- **Tier 2 (Complex):** Claude Sonnet 4.5 (`anthropic/claude-sonnet-4-5-20250929`) — research, strategy, final steps
-- **Tier 3 (High-Stakes):** Claude Opus (`anthropic/claude-opus-4-20250514`) — PRDs, design docs, executive reports
+- **Tier 2 (Complex):** Claude Sonnet 4.5 (`anthropic/claude-sonnet-4.5`) — research, strategy, final steps
+- **Tier 3 (High-Stakes):** Claude Opus (`anthropic/claude-opus-4`) — PRDs, design docs, executive reports
 - **API:** OpenAI-compatible via OpenRouter for all tiers
 - **Routing:** `selectTier()` auto-routes by keyword matching (T3 keywords → T2 keywords → T1 default)
 - **Fallback chain:** T3→T2→T1 if higher tier fails
