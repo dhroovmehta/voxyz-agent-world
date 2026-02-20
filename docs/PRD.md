@@ -363,14 +363,14 @@ Three governance models:
 
 **Database:** Supabase (PostgreSQL)
 - **Tier:** Free (500MB storage, 2GB bandwidth/month)
-- **URL:** https://juaekekwvcuyeleyvrvc.supabase.co
+- **URL:** (set in .env — do not commit)
 - **Purpose:** Store missions, proposals, tasks, agents, events, policies
 - **Rationale:** Managed PostgreSQL with real-time subscriptions, generous free tier, simple API
 
 **Server:** DigitalOcean VPS
 - **Tier:** Basic Droplet ($8/month)
 - **Specs:** 1GB RAM, 1 CPU, 25GB SSD, Ubuntu 22.04
-- **IP:** 147.182.204.128
+- **IP:** (set in deployment config — do not commit)
 - **Purpose:** Run Node.js workers, heartbeat, Discord bot
 - **Rationale:** Reliable, affordable, full control over processes
 
@@ -1400,7 +1400,7 @@ Discord bot and worker used `sb_secret_XXXXX...` format key, but heartbeat kept 
 #### Root Cause
 **Misunderstanding of Supabase key formats:**
 - `sb_secret_...` is NOT a valid Supabase API key format
-- Valid keys are JWT format: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
+- Valid keys are JWT format (start with `eyJ...`)
 - The `sb_secret_...` key happened to work for some operations but not others
 
 #### Impact
@@ -1735,17 +1735,17 @@ CREATE POLICY "Allow all on policy" ON ops_policy FOR ALL USING (true) WITH CHEC
 
 ```bash
 # Supabase
-SUPABASE_URL=https://juaekekwvcuyeleyvrvc.supabase.co
-SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_URL=your-supabase-url
+SUPABASE_SERVICE_KEY=your-service-key
 
 # Discord
-DISCORD_TOKEN=MTQ3MDI1NzU4NDM2NjgxNzM3Nw...
-EXECUTIVE_CHANNEL_ID=1470937684234211451
-TEAM_CHAT_CHANNEL_ID=1470937787112100067
-UPDATES_CHANNEL_ID=1470937810835083507
+DISCORD_TOKEN=your-discord-bot-token
+EXECUTIVE_CHANNEL_ID=your-channel-id
+TEAM_CHAT_CHANNEL_ID=your-channel-id
+UPDATES_CHANNEL_ID=your-channel-id
 
 # OpenRouter
-OPENROUTER_API_KEY=sk-or-v1-f2308e243aefc327...
+OPENROUTER_API_KEY=your-openrouter-key
 LLM_MODEL=anthropic/claude-3.5-sonnet
 ```
 

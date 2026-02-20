@@ -1,0 +1,19 @@
+# Gitleaks allowlist — false positives from test files using fake/dummy tokens
+# These are not real secrets; they are hardcoded test values ending in ".test"
+101dc812f09714296081416423d334806520a5e8:tests/industry-hiring.test.js:generic-api-key:5
+101dc812f09714296081416423d334806520a5e8:tests/expert-reviews.test.js:generic-api-key:5
+101dc812f09714296081416423d334806520a5e8:tests/dynamic-roles.test.js:generic-api-key:5
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase4/smart-routing.test.js:generic-api-key:5
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase5/tier-selection.test.js:generic-api-key:5
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase5/persona-rubric.test.js:generic-api-key:5
+2943a96b9213314068adb611c31b3b4184df95e0:tests/setup.js:generic-api-key:3
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase2/roster-injection.test.js:generic-api-key:10
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase3/projects.test.js:generic-api-key:5
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase6/enhanced-reviews.test.js:generic-api-key:5
+2943a96b9213314068adb611c31b3b4184df95e0:tests/phase5/context-enrichment.test.js:generic-api-key:6
+
+# Historical PRD.md entries — truncated/partial key examples, confirmed non-exploitable by TruffleHog
+0d4b17a497e80f6d52c0a0a214747f015e3b4fbe:docs/PRD.md:generic-api-key:1320
+0d4b17a497e80f6d52c0a0a214747f015e3b4fbe:docs/PRD.md:generic-api-key:1687
+0d4b17a497e80f6d52c0a0a214747f015e3b4fbe:docs/PRD.md:generic-api-key:1690
+0d4b17a497e80f6d52c0a0a214747f015e3b4fbe:docs/PRD.md:generic-api-key:1696
