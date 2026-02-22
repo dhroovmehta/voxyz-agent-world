@@ -1,6 +1,6 @@
 # Frasier — Completed Features
 
-> Last updated: Feb 17, 2026 (v0.4.1)
+> Last updated: Feb 22, 2026 (v0.5.0)
 
 ---
 
@@ -193,8 +193,48 @@
 | `!activate <team_id>` | Activate a team |
 | `!deactivate <team_id>` | Deactivate a team |
 | `!newbiz <name>` | Create a business unit |
+| `!content list` | Show drafts waiting for review (top 10 by score) |
+| `!content view <id>` | View full draft details (supports 8-char short IDs) |
+| `!content approve <id>` | Approve a draft for publishing |
+| `!content reject <id>` | Reject a draft permanently |
+| `!content revise <id> [feedback]` | Send draft back for revision with optional feedback |
+| `!content stats` | Pipeline statistics (counts by status, published last 7d, new research) |
+| `!watchlist list` | Show current watchlist grouped by category |
+| `!watchlist add topic "AI agents"` | Add a topic to Scout's watchlist |
+| `!watchlist add account @handle` | Add a Twitter account to watchlist |
+| `!watchlist remove <id or value>` | Remove a watchlist item |
 | `!help` | Show available commands |
 | DM to Frasier | Casual chat or task delegation |
+
+---
+
+## Contentron Integration (v0.5.0)
+
+### Content Pipeline Commands
+- **File created:** `src/lib/content.js`
+- **File modified:** `src/discord_bot.js`
+- **Tests:** 25 in `tests/contentron/content.test.js`
+- **How it works:** Frasier writes to shared Supabase tables (`content_drafts`, `content_watchlist`). Contentron reads on its 2-hour tick. Zero direct communication.
+- `!content list` — Top 10 queued drafts sorted by `score_overall` DESC, with remaining count
+- `!content view <id>` — Full draft: content text, score breakdown, editor issues/suggestions, source topic. Supports 8-char short UUID.
+- `!content approve <id>` — Sets `status='published'`, `published_at=NOW()`. Idempotent (no-op if already published).
+- `!content reject <id>` — Sets `status='discarded'`. Idempotent (no-op if already discarded).
+- `!content revise <id> [feedback]` — Sets `status='revision'`, appends feedback to `editor_suggestions`. Only works on queued drafts.
+- `!content stats` — Counts by status + published last 7 days + new research items
+- All mutations logged as events (`content_approved`, `content_rejected`, `content_revision_requested`)
+
+### Watchlist Commands
+- `!watchlist list` — All items grouped by category (Core Topics, Supporting Topics, Trending)
+- `!watchlist add topic "multimodal AI"` — Inserts with `type='topic'`, `category='supporting'`, `added_by='dhroov'`
+- `!watchlist add account @AnthropicAI` — Inserts with `type='twitter_account'`, `category='core'`
+- `!watchlist remove <id or value>` — Deletes by UUID or by value string match
+- Mutations logged as events (`watchlist_item_added`, `watchlist_item_removed`)
+
+### Content Module (`src/lib/content.js`)
+- 10 exported functions: `pillarName`, `listQueuedDrafts`, `viewDraft`, `approveDraft`, `rejectDraft`, `reviseDraft`, `getDraftStats`, `listWatchlist`, `addWatchlistItem`, `removeWatchlistItem`
+- `resolveDraft(shortId)` helper: full UUID → exact match; < 36 chars → prefix match (fetch all, filter in JS)
+- Pillar name mapping: 1="Idea to Shipped", 2="The Double-Click", 3="Live from the Workshop"
+- All Supabase queries have error handling + console logging
 
 ---
 

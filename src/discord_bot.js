@@ -27,6 +27,7 @@ const gdrive = require('./lib/google_drive');
 const alerts = require('./lib/alerts');
 const web = require('./lib/web');
 const projects = require('./lib/projects');
+const content = require('./lib/content');
 
 // ============================================================
 // DISCORD CLIENT SETUP
@@ -639,6 +640,16 @@ async function handleCommand(message, content) {
       break;
     }
 
+    case 'content': {
+      await handleContentCommand(message, args);
+      break;
+    }
+
+    case 'watchlist': {
+      await handleWatchlistCommand(message, args);
+      break;
+    }
+
     case 'help': {
       await message.reply(
         '**Commands:**\n' +
@@ -653,6 +664,18 @@ async function handleCommand(message, content) {
         '`!newbiz <name>` — Create a business unit\n' +
         '`!activate <team-id>` — Activate a team\n' +
         '`!deactivate <team-id>` — Deactivate a team\n' +
+        '\n**Content Pipeline:**\n' +
+        '`!content list` — Show drafts waiting for review\n' +
+        '`!content view <id>` — View full draft details\n' +
+        '`!content approve <id>` — Approve a draft for publishing\n' +
+        '`!content reject <id>` — Reject a draft permanently\n' +
+        '`!content revise <id> [feedback]` — Send back for revision\n' +
+        '`!content stats` — Pipeline statistics\n' +
+        '\n**Watchlist:**\n' +
+        '`!watchlist list` — Show current watchlist\n' +
+        '`!watchlist add topic "AI agents"` — Add a topic\n' +
+        '`!watchlist add account @handle` — Add a Twitter account\n' +
+        '`!watchlist remove <id or value>` — Remove an item\n' +
         '\nOr just type normally to talk to Frasier.'
       );
       break;
@@ -660,6 +683,339 @@ async function handleCommand(message, content) {
 
     default:
       await message.reply(`Unknown command: !${cmd}. Type !help for available commands.`);
+  }
+}
+
+// ============================================================
+// CONTENT PIPELINE COMMAND HANDLER
+// ============================================================
+
+/**
+ * Handle !content subcommands: list, view, approve, reject, revise, stats.
+ * WHY: Contentron has no Discord bot. These commands let Zero manage the
+ * content pipeline directly from Discord via shared Supabase tables.
+ */
+async function handleContentCommand(message, args) {
+  var sub = (args[0] || '').toLowerCase();
+
+  switch (sub) {
+    case 'list':
+    case 'queue': {
+      var result = await content.listQueuedDrafts();
+      if (result.drafts.length === 0) {
+        await message.reply('No drafts in the queue right now.');
+        return;
+      }
+
+      var reply = '**Content Queue** (' + result.drafts.length + ' of ' + result.total + ' drafts)\n\n';
+      result.drafts.forEach(function(d, i) {
+        var shortId = (d.id || '').substring(0, 8);
+        var pillar = content.pillarName(d.pillar);
+        var score = d.score_overall ? d.score_overall.toFixed(1) : '—';
+        var date = d.created_at ? new Date(d.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+        reply += (i + 1) + '. **' + (d.title || 'Untitled') + '** [' + shortId + ']\n';
+        reply += '   ' + (d.format || '—') + ' | Pillar ' + (d.pillar || '?') + ': ' + pillar + ' | Score: ' + score + ' | ' + date + '\n\n';
+      });
+
+      if (result.total > 10) {
+        reply += '...and ' + (result.total - 10) + ' more. Showing top 10 by score.\n';
+      }
+      reply += 'Use `!content view <id>` for full details.';
+      await sendSplit(message.channel, reply);
+      break;
+    }
+
+    case 'view': {
+      var draftId = args[1];
+      if (!draftId) {
+        await message.reply('Usage: `!content view <id>`');
+        return;
+      }
+
+      var draft = await content.viewDraft(draftId);
+      if (!draft) {
+        await message.reply('Draft not found. Check the ID and try again.');
+        return;
+      }
+
+      var shortId = (draft.id || '').substring(0, 8);
+      var reply = '**' + (draft.title || 'Untitled') + '** [' + shortId + ']\n';
+      reply += 'Status: ' + draft.status + ' | Format: ' + (draft.format || '—') + ' | Pillar ' + (draft.pillar || '?') + ': ' + content.pillarName(draft.pillar) + '\n';
+      reply += 'Score: ' + (draft.score_overall ? draft.score_overall.toFixed(1) : '—') + '/5.0';
+
+      // Score breakdown
+      if (draft.score_breakdown) {
+        var sb = draft.score_breakdown;
+        reply += ' (';
+        var parts = [];
+        if (sb.voice_match != null) parts.push('Voice: ' + sb.voice_match);
+        if (sb.clarity != null) parts.push('Clarity: ' + sb.clarity);
+        if (sb.value != null) parts.push('Value: ' + sb.value);
+        if (sb.engagement_potential != null) parts.push('Engagement: ' + sb.engagement_potential);
+        if (sb.originality != null) parts.push('Originality: ' + sb.originality);
+        reply += parts.join(', ') + ')';
+      }
+      reply += '\n';
+
+      if (draft.source_topic) {
+        reply += 'Source: ' + draft.source_topic + '\n';
+      }
+      if (draft.revision_count) {
+        reply += 'Revisions: ' + draft.revision_count + '\n';
+      }
+
+      // Editor issues
+      if (draft.editor_issues && draft.editor_issues.length > 0) {
+        reply += '\n**Issues:**\n';
+        draft.editor_issues.forEach(function(issue) {
+          reply += '  - ' + issue + '\n';
+        });
+      }
+
+      // Editor suggestions
+      if (draft.editor_suggestions && draft.editor_suggestions.length > 0) {
+        reply += '\n**Suggestions:**\n';
+        draft.editor_suggestions.forEach(function(sug) {
+          reply += '  - ' + sug + '\n';
+        });
+      }
+
+      // Full content
+      if (draft.content_text) {
+        reply += '\n**Content:**\n```\n' + draft.content_text + '\n```';
+      }
+
+      await sendSplit(message.channel, reply);
+      break;
+    }
+
+    case 'approve': {
+      var draftId = args[1];
+      if (!draftId) {
+        await message.reply('Usage: `!content approve <id>`');
+        return;
+      }
+
+      var result = await content.approveDraft(draftId);
+      if (result.ok) {
+        await message.reply('Draft **' + (result.draft.title || 'Untitled') + '** approved for publishing. Contentron will pick it up on the next tick.');
+        await events.logEvent({
+          eventType: 'content_approved',
+          severity: 'info',
+          description: 'Draft "' + (result.draft.title || draftId) + '" approved by Zero',
+          data: { draftId: result.draft.id }
+        });
+      } else if (result.reason === 'already_published') {
+        await message.reply('That draft is already published. No action needed.');
+      } else if (result.reason === 'not_found') {
+        await message.reply('Draft not found. Check the ID and try again.');
+      } else {
+        await message.reply('Failed to approve draft: ' + (result.message || result.reason));
+      }
+      break;
+    }
+
+    case 'reject': {
+      var draftId = args[1];
+      if (!draftId) {
+        await message.reply('Usage: `!content reject <id>`');
+        return;
+      }
+
+      var result = await content.rejectDraft(draftId);
+      if (result.ok) {
+        await message.reply('Draft **' + (result.draft.title || 'Untitled') + '** rejected and discarded.');
+        await events.logEvent({
+          eventType: 'content_rejected',
+          severity: 'info',
+          description: 'Draft "' + (result.draft.title || draftId) + '" rejected by Zero',
+          data: { draftId: result.draft.id }
+        });
+      } else if (result.reason === 'already_discarded') {
+        await message.reply('That draft is already discarded. No action needed.');
+      } else if (result.reason === 'not_found') {
+        await message.reply('Draft not found. Check the ID and try again.');
+      } else {
+        await message.reply('Failed to reject draft: ' + (result.message || result.reason));
+      }
+      break;
+    }
+
+    case 'revise': {
+      var draftId = args[1];
+      if (!draftId) {
+        await message.reply('Usage: `!content revise <id> [feedback]`');
+        return;
+      }
+
+      // Everything after the id is feedback text
+      var feedback = args.slice(2).join(' ').trim() || null;
+
+      var result = await content.reviseDraft(draftId, feedback);
+      if (result.ok) {
+        var msg = 'Draft **' + (result.draft.title || 'Untitled') + '** sent back for revision.';
+        if (feedback) msg += ' Feedback: "' + feedback + '"';
+        msg += ' Contentron\'s Writer will pick this up on the next tick.';
+        await message.reply(msg);
+        await events.logEvent({
+          eventType: 'content_revision_requested',
+          severity: 'info',
+          description: 'Draft "' + (result.draft.title || draftId) + '" sent for revision by Zero',
+          data: { draftId: result.draft.id, feedback: feedback }
+        });
+      } else if (result.reason === 'not_queued') {
+        await message.reply('That draft isn\'t in the queue (status: not "queued"). Only queued drafts can be sent back for revision.');
+      } else if (result.reason === 'not_found') {
+        await message.reply('Draft not found. Check the ID and try again.');
+      } else {
+        await message.reply('Failed to revise draft: ' + (result.message || result.reason));
+      }
+      break;
+    }
+
+    case 'stats': {
+      var stats = await content.getDraftStats();
+      var reply = '**Content Pipeline Stats**\n\n';
+      reply += '**Drafts by Status:**\n';
+
+      var statuses = ['draft', 'editing', 'queued', 'revision', 'published', 'discarded'];
+      statuses.forEach(function(s) {
+        var count = stats.byStatus[s] || 0;
+        reply += '  ' + s + ': ' + count + '\n';
+      });
+
+      reply += '\n**Published (last 7 days):** ' + stats.publishedLast7Days;
+      reply += '\n**New research items:** ' + stats.newResearch;
+      await message.reply(reply);
+      break;
+    }
+
+    default:
+      await message.reply(
+        '**Content commands:**\n' +
+        '`!content list` — Show drafts in queue\n' +
+        '`!content view <id>` — View draft details\n' +
+        '`!content approve <id>` — Approve for publishing\n' +
+        '`!content reject <id>` — Reject permanently\n' +
+        '`!content revise <id> [feedback]` — Send back for revision\n' +
+        '`!content stats` — Pipeline statistics'
+      );
+  }
+}
+
+// ============================================================
+// WATCHLIST COMMAND HANDLER
+// ============================================================
+
+/**
+ * Handle !watchlist subcommands: list, add, remove.
+ * WHY: Scout monitors these items. Adding/removing from Discord
+ * gives Zero control over what Scout watches on the next cycle.
+ */
+async function handleWatchlistCommand(message, args) {
+  var sub = (args[0] || '').toLowerCase();
+
+  switch (sub) {
+    case 'list': {
+      var items = await content.listWatchlist();
+      if (items.length === 0) {
+        await message.reply('Watchlist is empty. Use `!watchlist add topic "AI agents"` to add items.');
+        return;
+      }
+
+      // Group by category
+      var grouped = {};
+      items.forEach(function(item) {
+        var cat = item.category || 'other';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(item);
+      });
+
+      var reply = '**Watchlist** (' + items.length + ' items)\n';
+      var categoryLabels = {
+        'core': 'Core Topics',
+        'supporting': 'Supporting Topics',
+        'trending': 'Trending'
+      };
+
+      Object.keys(grouped).forEach(function(cat) {
+        reply += '\n**' + (categoryLabels[cat] || cat) + ':**\n';
+        grouped[cat].forEach(function(item) {
+          var shortId = (item.id || '').substring(0, 8);
+          var activeTag = item.active === false ? ' [inactive]' : '';
+          reply += '  - ' + item.value + ' (' + item.type + ') [' + shortId + ']' + activeTag + '\n';
+        });
+      });
+
+      await sendSplit(message.channel, reply);
+      break;
+    }
+
+    case 'add': {
+      var type = (args[1] || '').toLowerCase();
+      if (!type) {
+        await message.reply('Usage: `!watchlist add topic "AI agents"` or `!watchlist add account @handle`');
+        return;
+      }
+
+      // Parse value — may be quoted: !watchlist add topic "multimodal AI"
+      var valueArgs = args.slice(2);
+      var value = valueArgs.join(' ').replace(/^["']|["']$/g, '').trim();
+
+      if (!value) {
+        await message.reply('Usage: `!watchlist add ' + type + ' <value>`');
+        return;
+      }
+
+      var result = await content.addWatchlistItem(type, value);
+      if (result.ok) {
+        await message.reply('Added **' + value + '** (' + result.item.type + ') to the watchlist. Scout will pick this up on the next cycle.');
+        await events.logEvent({
+          eventType: 'watchlist_item_added',
+          severity: 'info',
+          description: 'Watchlist item "' + value + '" added by Zero',
+          data: { type: type, value: value }
+        });
+      } else if (result.reason === 'invalid_type') {
+        await message.reply('Invalid type "' + type + '". Use `topic`, `account`, or `rss`.');
+      } else {
+        await message.reply('Failed to add watchlist item: ' + (result.message || result.reason));
+      }
+      break;
+    }
+
+    case 'remove': {
+      var idOrValue = args.slice(1).join(' ').replace(/^["']|["']$/g, '').trim();
+      if (!idOrValue) {
+        await message.reply('Usage: `!watchlist remove <id or value>`');
+        return;
+      }
+
+      var result = await content.removeWatchlistItem(idOrValue);
+      if (result.ok) {
+        await message.reply('Removed **' + result.item.value + '** from the watchlist.');
+        await events.logEvent({
+          eventType: 'watchlist_item_removed',
+          severity: 'info',
+          description: 'Watchlist item "' + result.item.value + '" removed by Zero',
+          data: { value: result.item.value }
+        });
+      } else if (result.reason === 'not_found') {
+        await message.reply('Item not found. Use `!watchlist list` to see current items.');
+      } else {
+        await message.reply('Failed to remove item: ' + (result.message || result.reason));
+      }
+      break;
+    }
+
+    default:
+      await message.reply(
+        '**Watchlist commands:**\n' +
+        '`!watchlist list` — Show current watchlist\n' +
+        '`!watchlist add topic "AI agents"` — Add a topic\n' +
+        '`!watchlist add account @handle` — Add a Twitter account\n' +
+        '`!watchlist remove <id or value>` — Remove an item'
+      );
   }
 }
 

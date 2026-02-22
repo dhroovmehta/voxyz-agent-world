@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ---
 
+## [0.5.0] — 2026-02-22 (Contentron Integration)
+
+### Added
+- **`!content` command family:** 6 subcommands for managing the Contentron content pipeline from Discord — `list`, `view`, `approve`, `reject`, `revise`, `stats`
+- **`!watchlist` command family:** 3 subcommands for managing Scout's monitoring targets — `list`, `add`, `remove`
+- **`src/lib/content.js`:** New module with all content pipeline and watchlist Supabase queries, decoupled from Discord I/O
+- **Short UUID support:** Draft IDs can be referenced by first 8 characters for convenience
+- **Idempotent mutations:** Approving an already-published draft or rejecting an already-discarded draft returns a friendly no-op message
+- **25 new tests:** `tests/contentron/content.test.js` — full coverage of content pipeline + watchlist CRUD (total: 169 tests passing)
+- **Updated `!help`:** Now includes Content Pipeline and Watchlist command sections
+
+### Notes
+- Frasier writes to shared Supabase tables; Contentron reads on its 2-hour tick. Zero direct communication.
+- All status changes are logged as events (`content_approved`, `content_rejected`, `content_revision_requested`, `watchlist_item_added`, `watchlist_item_removed`)
+
+---
+
 ## [0.4.1] — 2026-02-17 (Autonomous Lifecycle + Announcement Fix)
 
 ### Added

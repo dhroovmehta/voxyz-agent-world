@@ -12,6 +12,8 @@
 2943a96b9213314068adb611c31b3b4184df95e0:tests/phase6/enhanced-reviews.test.js:generic-api-key:5
 2943a96b9213314068adb611c31b3b4184df95e0:tests/phase5/context-enrichment.test.js:generic-api-key:6
 
+tests/contentron/content.test.js:generic-api-key:6
+
 # Historical PRD.md entries — truncated/partial key examples, confirmed non-exploitable by TruffleHog
 0d4b17a497e80f6d52c0a0a214747f015e3b4fbe:docs/PRD.md:generic-api-key:1320
 0d4b17a497e80f6d52c0a0a214747f015e3b4fbe:docs/PRD.md:generic-api-key:1687
