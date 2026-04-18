@@ -103,6 +103,32 @@ Activated in config at `/opt/hermes/data/config.yaml` → `display.skin: sakura`
 
 **Skins only apply to the CLI/terminal surface.** Discord platform (`gateway/platforms/discord.py`) imports zero from `skin_engine` — Rich markup `[bold #hex]text[/]` isn't translated to Discord's limited ANSI/markdown. The banner, per-character gradient, and braille hero render only when Dhroov is in an interactive `hermes chat` session on the VPS.
 
+### ⚠️ Color rendering fix — truecolor not forwarded through `docker exec` (SHIPPED 2026-04-18)
+
+**Symptom:** skin colors rendered as washed-out pastels when running `hermes` over SSH to the VPS, even though the exact same hex codes rendered vibrantly on Dhroov's previous local Mac install of Hermes. Deep purple `#4400AA` looked baby-blue, hot magenta `#FF2975` looked pink, cyan `#00FFFF` looked white-ish, etc. Cost many hours of debugging during the 2026-04-18 skin deploy.
+
+**Root cause:** bare `hermes` on mootoshi drops into the gateway container via `docker exec -it -u hermes hermes-gateway …` (line 109 of `/usr/local/bin/hermes`). Docker's `exec` does **NOT** forward the outer shell's `TERM` or `COLORTERM` env vars by default. Inside the container, Hermes's Rich library probes the terminal, sees no color-capability signals, and concludes `color_system: None` → silently downsamples every 24-bit hex to its nearest 256-color (or lower) palette approximation. Result: the *exact* skin YAML renders flat/pastel instead of neon-saturated.
+
+**Why the local install didn't have this bug:** the previous Mac-resident hermes ran directly in the user's terminal — no `docker exec` layer, no env-var loss.
+
+**Fix:** patch all four `docker exec` invocations in `/usr/local/bin/hermes` to forward the vars explicitly:
+```
+docker exec -it -e COLORTERM=truecolor -e TERM=${TERM:-xterm-256color} -u hermes …
+```
+Pre-patch backup: `/usr/local/bin/hermes.bak-20260418-154910`.
+
+**Verification probe** (run inside a VPS SSH session):
+```bash
+sudo docker exec -e TERM=xterm-256color -e COLORTERM=truecolor hermes-gateway \
+  bash -lc "source /opt/hermes/.venv/bin/activate && \
+            python3 -c 'from rich.console import Console; print(Console().color_system)'"
+# expect: truecolor
+```
+
+**User-visible test:** the 6 banner_logo color stops printed as solid block chars should all render distinctly vibrant, not muted variants of each other. See `/tmp/probe_colors.sh` on VPS for the probe script used.
+
+**Lesson:** when a color/formatting issue only appears on the Dockerized deployment and not a direct-install one, always check what TTY/TERM/COLORTERM the process inside the container actually sees. `docker exec -it` gives you a TTY but does NOT give you the caller's terminal environment — it inherits the container's (usually empty or minimal) env.
+
 ### Gaps / dead threads
 - **Spell Book cron** (9am ET Apple Notes sorter, cron id `a813bcd125af` → Discord channel `1494017207724675313`) — referenced in old session notes but `/root/.hermes/cron/`, `/opt/hermes/data/cron/`, and root crontab are all empty. Only live cron is `openclaw-monitor.py` every 5min. Was it Mac-hosted (now wiped) or was it never migrated to VPS? TBD.
 - **`/root/.hermes/` is NOT empty** — previously noted as empty; actually contains the host-CLI skin/config state parallel to `/opt/hermes/data/`. Source of the skin-path drift gotcha above.
